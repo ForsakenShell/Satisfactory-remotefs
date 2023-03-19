@@ -1,0 +1,12 @@
+{
+    "Lua.diagnostics.globals": [
+        "computer",
+        "component",
+        "event",
+        "findClass",
+        "filesystem"
+    ],
+    "Lua.diagnostics.disable": [
+        "trailing-space"
+    ]
+}
