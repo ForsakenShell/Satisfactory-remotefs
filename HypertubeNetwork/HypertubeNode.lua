@@ -20,8 +20,8 @@ HypertubeNode = {
     
     -- Operational Mode of this Node
     MODE_INVALID            = -1,       -- Invalid Node
-    MODE_DESTINATION        = 1,        -- Node is in Destination Mode and Configuration
-    MODE_JUNCTION           = 2,        -- Node is in Junction Mode and Configuration
+    MODE_DESTINATION        =  1,       -- Node is in Destination Mode and Configuration
+    MODE_JUNCTION           =  2,       -- Node is in Junction Mode and Configuration
     mode                    = -1,       -- Initially
     
     -- The known HypertubeNetwork map
@@ -31,21 +31,24 @@ HypertubeNode = {
             vertex:number = Node vertex,
             name:string = Node name (will be nil for pure Junctions),
             mode:number = Node ala Mode,
-            map:table = {
-                index:number = The index of the RSS Sign Element for this node on the network map display,
-                edges:table = Array of indexes for this nodes edges on the network map display,
-                iuio:UIOElement = uio for the node on the displays,
-                euios:table = Array of uios for this nodes edges on the displays,
-            }
+            connections:table = array of vertexes this node connects to,
         }
     ]]
     nodes                   = {},
     
-    map                     = {},
-    
     start                   = -1,       -- Current route A
     destination             = -1,       -- Current route B
     route                   = nil,      -- Current route
+    
+    --[[
+        map:table = {
+            element:number = The index of the RSS Sign Element for the node/edge in the network map display,
+            zOffset:number = The mZIndex offset of this element from the base map layer,
+        }
+    ]]
+    SETTING_MAPHASH         = 'mapHash',
+    map                     = {},
+    mapHash                 = nil,
 }
 HypertubeNode.__index = HypertubeNode
 
@@ -57,7 +60,9 @@ HypertubeNode.__index = HypertubeNode
 
 local ClassGroup = require( "/lib/classgroups.lua", ____RemoteCommonLib )
 local RSSBuilder = require( "/lib/RSSBuilder.lua", ____RemoteCommonLib )
+local Vector2d = require( "/lib/Vector2d.lua", ____RemoteCommonLib )
 local Vector2f = require( "/lib/Vector2f.lua", ____RemoteCommonLib )
+local Vector3f = require( "/lib/Vector3f.lua", ____RemoteCommonLib )
 local Vector4F = require( "/lib/Vector4F.lua", ____RemoteCommonLib )
 
 
@@ -175,23 +180,31 @@ end
 
 
 --------------------------------------------------------------------------------
+--What level of SignLayout has been built?
+local LAYOUT_INCOMPLETE = -1
+local LAYOUT_BASE = 0
+local LAYOUT_MAP = 1
+
+local lastLayoutState = LAYOUT_INCOMPLETE
+local signLayout = nil
+
 local mapGenerated = false
 local signMapValid = false
 local exportedTemplate = false
 
--- How to order the "status" element[s] on the RSS sign[s]
-local RSS_STATUS_ZINDEX_STATUS_FRONT            =  64       -- In front of everything
-local RSS_STATUS_ZINDEX_STATUS_BACK             = -64       -- Behind the blackground
+-- How to order the element[s] on the RSS sign[s]
+local RSS_EZINDEX_STATUS_FRONT                  =  64       -- In front of everything
+local RSS_EZINDEX_STATUS_BACK                   = -64       -- Behind the blackground
 
-local RSS_STATUS_ZINDEX_LOCATION                =  40       -- In front List/Map
+local RSS_EZINDEX_LOCATION                      =  40       -- In front List/Map
 
-local RSS_STATUS_ZINDEX_LIST_FRONT              =  32       -- In front of except the status
-local RSS_STATUS_ZINDEX_LIST_BACK               = -64       -- Behind the blackground
+local RSS_EZINDEX_LIST_FRONT                    =  32       -- In front of except the status
+local RSS_EZINDEX_LIST_BACK                     = -64       -- Behind the blackground
 
-local RSS_STATUS_ZINDEX_UIO                     =  12       -- In front of filler
-local RSS_STATUS_ZINDEX_FILLER                  =   8       -- In front of something
+local RSS_EZINDEX_UIO                           =  12       -- In front of filler
+local RSS_EZINDEX_FILLER                        =   8       -- In front of something
 
-local RSS_STATUS_ZINDEX_HIDDEN                  = -64       -- Behind everything
+local RSS_EZINDEX_HIDDEN                        = -64       -- Behind everything
 
 
 local ____nextRSSElementIndex                   = 0         -- Don't trust my own ability to track these, do it automagically
@@ -246,27 +259,23 @@ local FMP_MI_NETWORK_RESET                      = { 0, 0 }
 
 
 ---Generate the sign import string from the sign data table
----@param layout SignLayout SignLayout
----@return string import string that can be pasted into the RSS Sign of the appropriate type.  If ____Disk_UUID is set (and mounted as root) then the import string will be saved to "/rssimport.txt"
-local function generateRSSSignImport( layout, filename )
+---@param filename string If ____Disk_UUID is set to a non-empty string (see EEPROM.lua) then the import string will be saved to filename
+---@return string import string that can be pasted into the RSS Sign of the appropriate type.
+local function generateRSSSignImport( filename )
+    if signLayout == nil then return false, "signLayout is nil" end
     
-    
-    local result, import = layout:generateImportEx( "Normal", "2x1" )
+    local result, import = signLayout:generateImportEx( "Normal", "2x1" )
     if not result then
         print( "Unable to build import\n\t" .. import )
     end
     
     if ____Disk_UUID ~= nil and ____Disk_UUID ~= '' then
         local writeMap = HypertubeNode.mapHash ~= nil and HypertubeNode.mapHash ~= ''
-        local n = "rssimport.txt"
-        if not writeMap then
-            n = "rssimport_nomap.txt"
-        end
         print( 'Saving RSS Sign Import String to "%LocalAppData%\\FactoryGame\\Saved\\SaveGames\\computers\\' .. ____Disk_UUID .. '\\' .. filename ..  '"' )
         local handle = filesystem.open( '/' .. filename, "w" )
         if handle ~= nil then
             if writeMap then
-                handle:write( string.format( 'mapHash="%s"\n', HypertubeNode.mapHash ) )
+                handle:write( string.format( '%s="%s"\n', HypertubeNode.SETTING_MAPHASH, HypertubeNode.mapHash ) )
                 exportedTemplate = true
             end
             handle:write( import )
@@ -309,7 +318,7 @@ local function isNetworkMapValid()
     end
     local nodes = HypertubeNode.nodes
     local nCount = table.countKeyValuePairs( nodes )
-    if nodes == nil or nCount == 0 or nCount < HypertubeNode.vertex then                        -- Incomplete network
+    if nodes == nil or nCount == 0 or nCount < HypertubeNode.vertex then -- Incomplete network
         return false, "nodes == nil"
     end
     for _, node in pairs( nodes ) do
@@ -329,34 +338,52 @@ local function isNetworkMapValid()
 end
 
 
+---Create a Text Element for an RSSBuilder SignLayout
 local function addRSSTextElementToLayout( layout, eIndex, mElementName, mZIndex, mPosition, mText, mTextSize, mTextJustify, mColourOverwrite, mPadding )
-    local mSharedData = RSSBuilder.SignLayout.ElementData.SharedData.new( {
+    local mSharedData, reason = RSSBuilder.SignLayout.ElementData.SharedData.new( {
         mElementName = mElementName,
         mPosition = mPosition,
         mZIndex = mZIndex,
         mColourOverwrite = mColourOverwrite,
     } )
-    if mSharedData == nil then computer.stop() end
-    local mTextData = RSSBuilder.SignLayout.ElementData.TextData.new( {
+    if mSharedData == nil then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    local mTextData, reason = RSSBuilder.SignLayout.ElementData.TextData.new( {
         mText = mText,
         mTextSize = mTextSize,
         mTextJustify = mTextJustify,
         mPadding = mPadding,
     } )
-    if mTextData == nil then computer.stop() end
-    if not layout:addElement( RSSBuilder.SignLayout.ElementData.new( {
+    if mTextData == nil then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    local mElementData, reason = RSSBuilder.SignLayout.ElementData.new( {
         eIndex = eIndex,
         mElementType = "Text",
         mSharedData = mSharedData,
         mTextData = mTextData,
-    } ) ) then computer.stop() end
+    } )
+    if mElementData == nil then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    local result, reason = layout:addElement( mElementData )
+    if not result then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    return true
 end
 
 
+---Create an Image Element for an RSSBuilder SignLayout
 local function addRSSImageElementToLayout( layout, eIndex, mElementName, mZIndex, mPosition, mTexture, mColourOverwrite, mOverwriteImageSize, mUse9SliceMode, mUrl, mImageSize, mRotation )
     local mIsUsingCustom = ( mUrl ~= nil )and( type( mUrl ) == "string" )and( mUrl ~= '' )
     if mIsUsingCustom == false then mIsUsingCustom = nil end
-    local mSharedData = RSSBuilder.SignLayout.ElementData.SharedData.new( {
+    local mSharedData, reason = RSSBuilder.SignLayout.ElementData.SharedData.new( {
         mElementName = mElementName,
         mPosition = mPosition,
         mZIndex = mZIndex,
@@ -366,32 +393,48 @@ local function addRSSImageElementToLayout( layout, eIndex, mElementName, mZIndex
         mIsUsingCustom = mIsUsingCustom,
         mRotation = mRotation,
     } )
-    if mSharedData == nil then computer.stop() end
-    local mImageData = RSSBuilder.SignLayout.ElementData.ImageData.new(
+    if mSharedData == nil then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    local mImageData, reason = RSSBuilder.SignLayout.ElementData.ImageData.new(
         {
             mImageSize = mImageSize,
             mOverwriteImageSize = mOverwriteImageSize,
             mUse9SliceMode = mUse9SliceMode,
         } )
-    if mImageData == nil then computer.stop() end
-    if not layout:addElement( RSSBuilder.SignLayout.ElementData.new( {
+    if mImageData == nil then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    local mElementData, reason = RSSBuilder.SignLayout.ElementData.new( {
         eIndex = eIndex,
         mElementType = "Image",
         mSharedData = mSharedData,
         mImageData = mImageData,
-    } ) ) then computer.stop() end
+    } )
+    if mElementData == nil then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    local result, reason = layout:addElement( mElementData )
+    if not result then
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
+        return false
+    end
+    return true
 end
 
 
 ---Create the core RSS Sign data and elements
 ---@return table
-local function generateRSSSignBaseData()
-    local layout = RSSBuilder.SignLayout.new(
+local function generateBaseRSSSignLayout()
+    local layout, reason = RSSBuilder.SignLayout.new(
         {
             signSize = "2x1"
         } )
     if layout == nil then
-        computer.panic( "Oh shiz!\n" .. debug.traceback() )
+        HypertubeNode.panicNode( false, "Could not create SignLayout", reason )
         return nil
     end
     
@@ -403,29 +446,29 @@ local function generateRSSSignBaseData()
     local bdrUse9SliceModeStatus = Vector2f.new( 1.000000, 0.010000 )
     local bgdTexture = "/KUI/Assets/9Slice/9S1111.9S1111"
     local bgdUse9SliceModeStatus = Vector2f.new( 1.000000, 0.250000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_STATUS_TEXT     , "txtStatus", RSS_STATUS_ZINDEX_STATUS_FRONT    , mPosition, "Status of this node", 15, RSSBuilder.Text.Justification.Middle )
-    addRSSImageElementToLayout( layout, RSS_EID_STATUS_TEXT +  1, "bdrStatus", RSS_STATUS_ZINDEX_STATUS_FRONT - 1, mPosition, bdrTexture, Color.GREY_0750    , mOverwriteImageSize, bdrUse9SliceModeStatus )
-    addRSSImageElementToLayout( layout, RSS_EID_STATUS_TEXT +  2, "bgdStatus", RSS_STATUS_ZINDEX_STATUS_FRONT - 2, mPosition, bgdTexture, Color.CYAN_SIGN_LOW, mOverwriteImageSize, bgdUse9SliceModeStatus )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_STATUS_TEXT     , "txtStatus", RSS_EZINDEX_STATUS_FRONT    , mPosition, "Initializing...", 15, RSSBuilder.Text.Justification.Middle ) then return nil end
+    if not addRSSImageElementToLayout( layout, RSS_EID_STATUS_TEXT +  1, "bdrStatus", RSS_EZINDEX_STATUS_FRONT - 1, mPosition, bdrTexture, Color.GREY_0750    , mOverwriteImageSize, bdrUse9SliceModeStatus ) then return nil end
+    if not addRSSImageElementToLayout( layout, RSS_EID_STATUS_TEXT +  2, "bgdStatus", RSS_EZINDEX_STATUS_FRONT - 2, mPosition, bgdTexture, Color.CYAN_SIGN_LOW, mOverwriteImageSize, bgdUse9SliceModeStatus ) then return nil end
     
     
     -- Current Location
     mPosition = Vector2f.new( 320.000000, -200.000000 )
     mOverwriteImageSize = Vector2f.new( 360.000000, 96.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_LOC_START     , "txtLocCurr", RSS_STATUS_ZINDEX_LOCATION    , mPosition, "Current Location", 15, RSSBuilder.Text.Justification.Middle )
-    addRSSImageElementToLayout( layout, RSS_EID_LOC_START +  1, "bdrLocCurr", RSS_STATUS_ZINDEX_LOCATION - 1, mPosition, bdrTexture, Color.GREY_0750    , mOverwriteImageSize )
-    addRSSImageElementToLayout( layout, RSS_EID_LOC_START +  2, "bgdLocCurr", RSS_STATUS_ZINDEX_LOCATION - 2, mPosition, bgdTexture, Color.BLUE_SIGN_LOW, mOverwriteImageSize )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_LOC_START     , "txtLocCurr", RSS_EZINDEX_LOCATION    , mPosition, "Current Location", 15, RSSBuilder.Text.Justification.Middle ) then return nil end
+    if not addRSSImageElementToLayout( layout, RSS_EID_LOC_START +  1, "bdrLocCurr", RSS_EZINDEX_LOCATION - 1, mPosition, bdrTexture, Color.GREY_0750    , mOverwriteImageSize ) then return nil end
+    if not addRSSImageElementToLayout( layout, RSS_EID_LOC_START +  2, "bgdLocCurr", RSS_EZINDEX_LOCATION - 2, mPosition, bgdTexture, Color.BLUE_SIGN_LOW, mOverwriteImageSize ) then return nil end
     
     
     -- Destination Location
     mPosition = Vector2f.new( 320.000000, -20.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_LOC_DEST     , "txtLocDest", RSS_STATUS_ZINDEX_LOCATION    , mPosition, "Destination Location", 15, RSSBuilder.Text.Justification.Middle )
-    addRSSImageElementToLayout( layout, RSS_EID_LOC_DEST +  1, "bdrLocDest", RSS_STATUS_ZINDEX_LOCATION - 1, mPosition, bdrTexture, Color.GREY_0750     , mOverwriteImageSize )
-    addRSSImageElementToLayout( layout, RSS_EID_LOC_DEST +  2, "bgdLocDest", RSS_STATUS_ZINDEX_LOCATION - 2, mPosition, bgdTexture, Color.GREEN_SIGN_LOW, mOverwriteImageSize )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_LOC_DEST     , "txtLocDest", RSS_EZINDEX_LOCATION    , mPosition, "Destination Location", 15, RSSBuilder.Text.Justification.Middle ) then return nil end
+    if not addRSSImageElementToLayout( layout, RSS_EID_LOC_DEST +  1, "bdrLocDest", RSS_EZINDEX_LOCATION - 1, mPosition, bdrTexture, Color.GREY_0750     , mOverwriteImageSize ) then return nil end
+    if not addRSSImageElementToLayout( layout, RSS_EID_LOC_DEST +  2, "bgdLocDest", RSS_EZINDEX_LOCATION - 2, mPosition, bgdTexture, Color.GREEN_SIGN_LOW, mOverwriteImageSize ) then return nil end
     
     
     -- Location Preposition
     mPosition = Vector2f.new( 320.000000, -110.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_LOC_TO     , "txtCurrToDest", RSS_STATUS_ZINDEX_LOCATION, mPosition, "To", 25, RSSBuilder.Text.Justification.Middle )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_LOC_TO     , "txtCurrToDest", RSS_EZINDEX_LOCATION, mPosition, "To", 25, RSSBuilder.Text.Justification.Middle ) then return nil end
     
     
     -- List/Map Area
@@ -435,53 +478,53 @@ local function generateRSSSignBaseData()
     mOverwriteImageSize = Vector2f.new( 640.000000, 512.000000 )
     local mTexture = "/RSS/Assets/Images/UI/Shapes/1x2/1x2_outline1.1x2_outline1"
     local mUse9SliceMode = Vector2f.new( 1.000000, 0.067500 )
-    addRSSImageElementToLayout( layout, RSS_EID_LIST_BACKGROUND, "bdrListMapArea", RSS_STATUS_ZINDEX_FILLER, mPosition, mTexture, Color.ORANGE_SIGN_HIGH, mOverwriteImageSize, mUse9SliceMode )
+    if not addRSSImageElementToLayout( layout, RSS_EID_LIST_BACKGROUND, "bdrListMapArea", RSS_EZINDEX_FILLER, mPosition, mTexture, Color.ORANGE_SIGN_HIGH, mOverwriteImageSize, mUse9SliceMode ) then return nil end
     
     -- List Up Icon
     mPosition = Vector2f.new( 74.000000, -202.000000 )
     mOverwriteImageSize = Vector2f.new( 48.000000, 48.000000 )
     mTexture = "/RSS/Assets/Images/1x1/1x1_arrow_up.1x1_arrow_up"
     local mColourOverwrite = Color.new( 0.095307, 0.095307, 0.095307, 1.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_LIST_INDICATOR_UP, "icnListMoreUp", RSS_STATUS_ZINDEX_LIST_FRONT, mPosition, mTexture, mColourOverwrite, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_LIST_INDICATOR_UP, "icnListMoreUp", RSS_EZINDEX_LIST_FRONT, mPosition, mTexture, mColourOverwrite, mOverwriteImageSize ) then return nil end
     
     -- List Down Icon
     mPosition = Vector2f.new( 74.000000, 175.000000 )
     mTexture = "/RSS/Assets/Images/1x1/1x1_arrow_down.1x1_arrow_down"
-    addRSSImageElementToLayout( layout, RSS_EID_LIST_INDICATOR_DN, "icnListMoreDn", RSS_STATUS_ZINDEX_LIST_FRONT, mPosition, mTexture, mColourOverwrite, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_LIST_INDICATOR_DN, "icnListMoreDn", RSS_EZINDEX_LIST_FRONT, mPosition, mTexture, mColourOverwrite, mOverwriteImageSize ) then return nil end
     
     
     -- UIO - List / Map Toggle
     mOverwriteImageSize = Vector2f.new( 24.000000, 24.000000 )
     mTexture = "/Game/FactoryGame/Buildable/Factory/DroneStation/UI/TXUI_Drone_Input.TXUI_Drone_Input"
     mPosition = Vector2f.new( 496.000000, 57.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_MAP_TOGGLE    , "icnMapToggle", RSS_STATUS_ZINDEX_UIO    , mPosition, mTexture, Color.CYAN_SIGN_LOW, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_MAP_TOGGLE    , "icnMapToggle", RSS_EZINDEX_UIO    , mPosition, mTexture, Color.CYAN_SIGN_LOW, mOverwriteImageSize ) then return nil end
     local mPadding = Vector4F.new( 10.000000, 5.000000, 10.000000, 5.000000 )
     mPosition = Vector2f.new( 488.000000, 57.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_MAP_TOGGLE + 1, "txtMapToggle", RSS_STATUS_ZINDEX_UIO + 1, mPosition, "Display Map", 12, RSSBuilder.Text.Justification.Right, nil, mPadding )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_MAP_TOGGLE + 1, "txtMapToggle", RSS_EZINDEX_UIO + 1, mPosition, "Display Map", 12, RSSBuilder.Text.Justification.Right, nil, mPadding ) then return nil end
     
     -- UIO - Select Up
     mPosition = Vector2f.new( 496.000000, 81.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_LIST_SELECT_UP    , "icnSelectUp", RSS_STATUS_ZINDEX_UIO    , mPosition, mTexture, Color.ORANGE_SIGN_LOW, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_LIST_SELECT_UP    , "icnSelectUp", RSS_EZINDEX_UIO    , mPosition, mTexture, Color.ORANGE_SIGN_LOW, mOverwriteImageSize ) then return nil end
     mPosition = Vector2f.new( 488.000000, 81.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_LIST_SELECT_UP + 1, "txtSelectUp", RSS_STATUS_ZINDEX_UIO + 1, mPosition, "Scroll Up", 12, RSSBuilder.Text.Justification.Right, nil, mPadding )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_LIST_SELECT_UP + 1, "txtSelectUp", RSS_EZINDEX_UIO + 1, mPosition, "Scroll Up", 12, RSSBuilder.Text.Justification.Right, nil, mPadding ) then return nil end
     
     -- UIO - Select Down
     mPosition = Vector2f.new( 496.000000, 105.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_LIST_SELECT_DN    , "icnSelectDn", RSS_STATUS_ZINDEX_UIO    , mPosition, mTexture, Color.ORANGE_SIGN_LOW, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_LIST_SELECT_DN    , "icnSelectDn", RSS_EZINDEX_UIO    , mPosition, mTexture, Color.ORANGE_SIGN_LOW, mOverwriteImageSize ) then return nil end
     mPosition = Vector2f.new( 488.000000, 105.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_LIST_SELECT_DN + 1, "txtSelectDn", RSS_STATUS_ZINDEX_UIO + 1, mPosition, "Scroll Down", 12, RSSBuilder.Text.Justification.Right, nil, mPadding )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_LIST_SELECT_DN + 1, "txtSelectDn", RSS_EZINDEX_UIO + 1, mPosition, "Scroll Down", 12, RSSBuilder.Text.Justification.Right, nil, mPadding ) then return nil end
     
     -- UIO - Compute Route / Quick Return
     mPosition = Vector2f.new( 496.000000, 129.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_ROUTE_COMPUTE    , "icnComputeRoute", RSS_STATUS_ZINDEX_UIO    , mPosition, mTexture, Color.GREEN_SIGN_LOW, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_ROUTE_COMPUTE    , "icnComputeRoute", RSS_EZINDEX_UIO    , mPosition, mTexture, Color.GREEN_SIGN_LOW, mOverwriteImageSize ) then return nil end
     mPosition = Vector2f.new( 488.000000, 129.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_ROUTE_COMPUTE + 1, "txtComputeRoute", RSS_STATUS_ZINDEX_UIO + 1, mPosition, "Compute Route", 12, RSSBuilder.Text.Justification.Right, nil, mPadding )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_ROUTE_COMPUTE + 1, "txtComputeRoute", RSS_EZINDEX_UIO + 1, mPosition, "Compute Route", 12, RSSBuilder.Text.Justification.Right, nil, mPadding ) then return nil end
     
     -- UIO - Reset Routing
     mPosition = Vector2f.new( 496.000000, 153.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_ROUTE_RESET    , "icnResetRouting", RSS_STATUS_ZINDEX_UIO    , mPosition, mTexture, Color.RED_SIGN_LOW, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_ROUTE_RESET    , "icnResetRouting", RSS_EZINDEX_UIO    , mPosition, mTexture, Color.RED_SIGN_LOW, mOverwriteImageSize ) then return nil end
     mPosition = Vector2f.new( 488.000000, 153.000000 )
-    addRSSTextElementToLayout ( layout, RSS_EID_ROUTE_RESET + 1, "txtResetRouting", RSS_STATUS_ZINDEX_UIO + 1, mPosition, "Reset Routing", 12, RSSBuilder.Text.Justification.Right, nil, mPadding )
+    if not addRSSTextElementToLayout ( layout, RSS_EID_ROUTE_RESET + 1, "txtResetRouting", RSS_EZINDEX_UIO + 1, mPosition, "Reset Routing", 12, RSSBuilder.Text.Justification.Right, nil, mPadding ) then return nil end
     
     
     -- Some filler
@@ -490,29 +533,30 @@ local function generateRSSSignBaseData()
     mOverwriteImageSize = Vector2f.new( 96.000000, 192.000000 )
     mTexture = "/RSS/Assets/Images/1x2/1x2_difd.1x2_difd"
     mPosition = Vector2f.new( 234.000000, 148.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_FILLER    , "icnLogoDoggo", RSS_STATUS_ZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_FILLER    , "icnLogoDoggo", RSS_EZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize ) then return nil end
     
     -- 1000101
     mOverwriteImageSize = Vector2f.new( 48.000000, 48.000000 )
     mTexture = "/RSS/Assets/Images/Milestones/rss_milestone.rss_milestone"
-    local mUrl = "http://localhost/remotefs/HypertubeNetwork/images/ANS-E-Profile.png"
+    local mUrlPattern = '%s%s/images/%s'
+    local mUrl = string.format( mUrlPattern, ____RemoteFSBaseURL, ____RemoteFS, "ANS-E-Profile.png" )
     mPosition = Vector2f.new( 352.000000, 224.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_FILLER + 1, "icnLogoMe"   , RSS_STATUS_ZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize, nil, mUrl )
+    if not addRSSImageElementToLayout( layout, RSS_EID_FILLER + 1, "icnLogoMe"   , RSS_EZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize, nil, mUrl ) then return nil end
     
     -- FIN
-    mUrl = "http://localhost/remotefs/HypertubeNetwork/images/ficsit-network-logo.png"
+    mUrl = string.format( mUrlPattern, ____RemoteFSBaseURL, ____RemoteFS, "ficsit-network-logo.png" )
     mPosition = Vector2f.new( 416.000000, 224.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_FILLER + 2, "icnLogoFIN"  , RSS_STATUS_ZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize, nil, mUrl )
+    if not addRSSImageElementToLayout( layout, RSS_EID_FILLER + 2, "icnLogoFIN"  , RSS_EZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize, nil, mUrl ) then return nil end
     
     -- RSS2
     mTexture = "/KUI/Assets/Logo/TXUI_Logo_RSS.TXUI_Logo_RSS"
     mPosition = Vector2f.new( 480.000000, 224.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_FILLER + 3, "icnLogoRSS2" , RSS_STATUS_ZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_FILLER + 3, "icnLogoRSS2" , RSS_EZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize ) then return nil end
     
     -- And the blackground to hide elements behind
     mTexture = "/RSS/Assets/Images/UI/Shapes/Custom/shape_square.shape_square"
     local mImageSize = Vector2f.new( 1.000000, 1.000000 )
-    addRSSImageElementToLayout( layout, RSS_EID_BLACKGROUND, "imgBlackground" , 0, nil, mTexture, Color.BLACK, nil, nil, nil, mImageSize )
+    if not addRSSImageElementToLayout( layout, RSS_EID_BLACKGROUND, "imgBlackground" , 0, nil, mTexture, Color.BLACK, nil, nil, nil, mImageSize ) then return nil end
     
     -- Add the List Option Entries
     local oIndex = 0
@@ -520,7 +564,7 @@ local function generateRSSSignBaseData()
     for eIndex = RSS_EID_LIST_FIRST, RSS_EID_LIST_LAST do
         local mTextID = "txtListOpt" .. tostring( oIndex )
         mPosition = Vector2f.new( -192.000000, yOpt )
-        addRSSTextElementToLayout ( layout, eIndex, mTextID, RSS_STATUS_ZINDEX_LIST_FRONT, mPosition, '', 15, RSSBuilder.Text.Justification.Middle, nil, mPadding )
+        if not addRSSTextElementToLayout ( layout, eIndex, mTextID, RSS_EZINDEX_LIST_FRONT, mPosition, '', 15, RSSBuilder.Text.Justification.Middle, nil, mPadding ) then return nil end
         oIndex = oIndex + 1
         yOpt = yOpt + 25.0
     end
@@ -530,10 +574,9 @@ local function generateRSSSignBaseData()
 end
 
 
----Append the Network Map RSS Sign data as well as generate the HypertubeNode.map
----@param layout SIgnLayout The core sign data and elements
+---Generate the HypertubeNode.map and append the RSS Sign layout with the map elements
 ---@return boolean true/false if the map elements were added to the layout.elements
-local function appendRSSSignMapData( layout )
+local function generateMapAndAppendSignLayout()
     -- Make sure the entire map is loaded
     HypertubeNode.mapHash = nil
     local networkValid, reason = isNetworkMapValid()
@@ -597,7 +640,7 @@ local function appendRSSSignMapData( layout )
     
     local function addToHash( value, rotate )
         if value == nil or type( value ) ~= "number" then
-            computer.panic( "appendRSSSignMapData().addToHash() - value must be a number" )
+            HypertubeNode.panicNode( true, "value must be a number" )
         end
         if value == 0 then return end
         rotate = rotate or 0
@@ -635,15 +678,13 @@ local function appendRSSSignMapData( layout )
             elseif node.mode == HypertubeNode.MODE_JUNCTION then
                 zOff = -1   -- Put junctions behind destinations on the display
                 mTexture = mTextureJunction
-            else
-                computer.panic( "generateRSSSignTemplateData() - Node is invalid\n\tuuid  : " .. node.uuid .. "\n\tvertex: " .. tostring( node.vertex ) )
             end
             
             local pX = mapWindow[ 1 ] + ( node.location.x - minNodeX ) * scale
             local pY = mapWindow[ 2 ] + ( node.location.y - minNodeY ) * scale
             
             local mPosition = Vector2f.new( pX, pY )
-            addRSSImageElementToLayout( layout, eID, "node:" .. tostring( node.vertex ), RSS_STATUS_ZINDEX_LIST_BACK - 1, mPosition, mTexture, Color.GREY_0125, mOverwriteImageSizeNode )
+            if not addRSSImageElementToLayout( signLayout, eID, "node:" .. tostring( node.vertex ), RSS_EZINDEX_LIST_BACK - 1, mPosition, mTexture, Color.GREY_0125, mOverwriteImageSizeNode ) then return false end
             
             -- Map the vertex index to the map element index
             map[ node.vertex ] = { element = eID, zOffset = zOff }
@@ -690,7 +731,7 @@ local function appendRSSSignMapData( layout )
                     
                     local mPosition = Vector2f.new( eP[ 1 ], eP[ 2 ] )
                     local mOverwriteImageSize = Vector2f.new( 1.500000, eL )
-                    addRSSImageElementToLayout( layout, eID, "edge:" .. edge, RSS_STATUS_ZINDEX_LIST_BACK - 2, mPosition, mTextureEdge, Color.GREY_0125, mOverwriteImageSize, nil, nil, nil, eA )
+                    if not addRSSImageElementToLayout( signLayout, eID, "edge:" .. edge, RSS_EZINDEX_LIST_BACK - 2, mPosition, mTextureEdge, Color.GREY_0125, mOverwriteImageSize, nil, nil, nil, eA ) then return false end
                     
                     -- Map the edge to the map element index with the edges behind both the destination and junction nodes
                     map[ edge ] = { element = eID, zOffset = zOff }
@@ -707,7 +748,7 @@ local function appendRSSSignMapData( layout )
     HypertubeNode.map = map
     HypertubeNode.mapHash = string.format( "%x8", mapHash )
     
-    print( "mapHash: " .. HypertubeNode.mapHash )
+    print( string.format( "%s: %s", HypertubeNode.SETTING_MAPHASH, HypertubeNode.mapHash ) )
     
     return true
 end
@@ -717,6 +758,7 @@ end
 
 --------------------------------------------------------------------------------
 
+---Get the human readable string of a node operating mode
 function HypertubeNode.getModeName( mode )
     if mode == HypertubeNode.MODE_DESTINATION then
         return "MODE_DESTINATION"
@@ -728,8 +770,7 @@ end
 
 
 
----Read the node "name" value from the computer settings
----@return boolean: HypertubeNode.mode == HypertubeNode.MODE_DESTINATION
+---Read the node "name" value from the computer settings and determine the operating mode (destination if "name" is set, junction if not or empty)
 local function getNodeName()
     local name = ____ComputerSettings[ "name" ]             -- Only for destinations
     if name ~= nil and name == '' then name = nil end       -- Force empty to nil
@@ -740,14 +781,15 @@ local function getNodeName()
     else
         HypertubeNode.mode = HypertubeNode.MODE_JUNCTION
     end
+    print( "mode: " .. HypertubeNode.getModeName( HypertubeNode.mode ) )
 end
 
 
----Read the node "vertex" value from the computer settings
+---Read the node "vertex" value from the computer settings or panic if invalid
 local function getNodeVertex()
     local vertex = ____ComputerSettings[ "vertex" ]
     if vertex == nil or tonumber( vertex ) == nil then
-        computer.panic( "Invalid vertex" )
+        HypertubeNode.panicNode( true, "Invalid vertex" )
     end
     HypertubeNode.vertex = tonumber( vertex )
     print( "vertex: " .. tostring( HypertubeNode.vertex ) )
@@ -760,12 +802,12 @@ local function getNodeRouter()
     -- Find the router and name the WAN side so that this node can be identified on the WAN
     local routers = component.getComponentsByClass( ClassGroup.Networking.Routers.All )
     if routers == nil then
-        computer.panic( "Cannot find NetworkRouter - Nodes must be isolated on their own Component Network")
+        HypertubeNode.panicNode( true, "Cannot find NetworkRouter", "Nodes must be isolated on their own Component Network" )
     end
     if #routers == 0 then
-        computer.panic( "NetworkRouter Required - Nodes must be isolated on their own Component Network by a SINGLE NetworkRouter")
+        HypertubeNode.panicNode( true, "NetworkRouter Required", "Nodes must be isolated on their own Component Network by a SINGLE NetworkRouter" )
     elseif #routers > 1 then
-        computer.panic( "Too many NetworkRouters - Nodes must be isolated on their own Component Network by a SINGLE NetworkRouter")
+        HypertubeNode.panicNode( true, "Too many NetworkRouters", "Nodes must be isolated on their own Component Network by a SINGLE NetworkRouter" )
     end
     -- Name the router LAN and WAN sides
     local router = routers[ 1 ]
@@ -774,6 +816,7 @@ local function getNodeRouter()
     connectors[ 1 ].nick = n
     connectors[ 2 ].nick = n
     -- Tell the router only to pass messages through on the HypertubeNetwork port, this will reduce local network traffic for each node
+    -- TODO: Revisit this once I learn how to properly do this
     --router:addPortList( Network.port ) -- Doesn't work???
     --router:setPortList( { Network.port } ) -- Invalid instance - wtf???
     --[[local ports = router:getPortList()
@@ -784,12 +827,12 @@ local function getNodeRouter()
 end
 
 
----Read the node connections from the switch nicknames on the same component network
+---Read the node connections from the switch nicknames in the Component Network
 local function getNodeConnections()
     -- By reading the switches nicknames we can determine what nodes we connect to
     local switches = component.getComponentsByClass( ClassGroup.CircuitSwitches.All )
     if #switches < 1 then
-        computer.panic( "At least one circuit switch is required for a node" )
+        HypertubeNode.panicNode( true, "At least one circuit switch is required for a node" )
     end
     
     -- Create a table of remote,true from the switches
@@ -803,10 +846,8 @@ local function getNodeConnections()
                 -- Multiple switches with the same remote vertex is okay, just don't add the connection multiple times
                 hasConn[ remote ] = true
             end
-        elseif nick ~= nil and nick ~= '' then
-            computer.panic( "Circuit switch detected with an invalid nickname.  The only switches on the same component network as this computer should be for this HypertubeNode.  The nickname of each switch must corrospond to the remote node they power the tube to.  eg, a switch to vertex 1 should have the nickname of '1' (no quotes).  Any other switches with no nickname set are assumed to be present for network expansion and have not yet been linked." )
         else
-            print( "Ignoring switch : " .. switch.internalName )
+            print( string.format( "Ignoring switch:\n\tnick = '%s'\n\tinternalName = %s\n\tlocation = %s", nick, switch.internalName, Vector3f.ToString( switch.location ) ) )
         end
     end
     
@@ -814,13 +855,13 @@ local function getNodeConnections()
     local connCount = table.countKeyValuePairs( hasConn )
     print( "connections: " .. tostring( connCount ) )
     if connCount < 1 then
-        computer.panic( "Could not detect any switches with remote vertex IDs as their nicknames to generate the array of connections from" )
+        HypertubeNode.panicNode( true, "Cannot detect connections", "Could not detect any switches with remote vertex IDs as their nicknames to generate the array of connections from" )
     end
     local connections = {}
     for remote, _ in pairs( hasConn ) do
         print( "\t-> " .. tostring( remote ) )
         if remote == HypertubeNode.vertex then
-            computer.panic( "Invalid connection, can't go to myself" )
+            HypertubeNode.panicNode( true, "Invalid connection", "loopback invalid - can't go to myself" )
         end
         table.insert( connections, remote )
     end
@@ -832,7 +873,7 @@ end
 
 ---Get the vertex for a node by the node name
 ---@param name string Node name
----@return integer: Node vertex or -1 if the node name is not found in the network map
+---@return integer Node vertex or -1 if the node name is not found in the node array
 local function getDestinationByName( name )
     if name == nil or name == '' then return -1 end
     for v, node in pairs( HypertubeNode.nodes ) do
@@ -844,18 +885,23 @@ local function getDestinationByName( name )
 end
 
 
+
+---Get the vertex id from the desination name (as selected in the sign list options)
+---@return number vertex
 function HypertubeNode.UIO.ListOpt.getSelectedDestination()
     return getDestinationByName( listOpt.listData[ listOpt.selected ] )
 end
 
 
-function HypertubeNode.UIO.ListOpt.setListData( nodes )
+---Set the sign list options to the remote nodes known to this node
+function HypertubeNode.UIO.ListOpt.setListData()
     --print( "HypertubeNode.UIO.ListOpt.setListData()" )
     
-    local vertex = HypertubeNode.vertex
+    local nodes =  HypertubeNode.nodes      -- All nodes known (including this one and junctions)
+    local vertex = HypertubeNode.vertex     -- This node, duh
     
     local sortedList = {}
-    for vert, node in pairs( nodes ) do
+    for _, node in pairs( nodes ) do
         -- Isn't this node and the node has a name
         if vertex ~= node.vertex and node.name ~= nil then
             -- Only add this node to this nodes list of destinations if we can actually path there from here
@@ -886,7 +932,8 @@ function HypertubeNode.UIO.ListOpt.setListData( nodes )
 end
 
 
-function HypertubeNode.UIO.ListOpt.clearElements()
+---Reset all the UIO Elements to their "null state"
+function HypertubeNode.UIO.ListOpt.resetElements()
     for _, element in pairs( HypertubeNode.UIO.ListOpt.listUIOElements ) do
         element:setText( '' )
     end
@@ -897,6 +944,7 @@ function HypertubeNode.UIO.ListOpt.clearElements()
 end
 
 
+---Updates the UIO Elements for the changes in the selected item, scroll window, etc
 function HypertubeNode.UIO.ListOpt.updateElements()
     
     local selected = listOpt.selected
@@ -929,14 +977,14 @@ end
 
 
 ---Create an RSSElement or panic
----@param sign userdata: The RSSSign
----@param index number: The index of the element on the sign
----@param zOffset number?: Optional zOffset to apply when setZIndex is called on the RSSElement
+---@param sign userdata The RSSSign
+---@param index number The index of the element on the sign
+---@param zOffset number Optional zOffset to apply when setZIndex is called on the RSSElement
 ---@return UIO.UIOElements.RSSElement|nil
 local function createRSSElement( sign, index, zOffset )
     local uio = UIO.UIOElements.RSSElement.create( sign, index )
     if uio == nil then
-        computer.panic( "Unable to create UIO.UIOElements.RSSElement!\n" .. debug.traceback() )
+        HypertubeNode.panicNode( true, "Internal Software Error", "Unable to create UIO.UIOElements.RSSElement - check params at the callsite" )
     end
     uio.zOffset = zOffset
     return uio
@@ -944,55 +992,33 @@ end
 
 
 ---Create a Button Module or panic
----@param button userdata: The Button
+---@param button userdata The Button Module
 ---@return UIO.UIOElements.ButtonModule|nil
 local function createButtonModule( button )
     local uio = UIO.UIOElements.ButtonModule.create( button )
     if uio == nil then
-        computer.panic( "Unable to create UIO.UIOElements.ButtonModule!\n" .. debug.traceback() )
+        HypertubeNode.panicNode( true, "Internal Software Error", "Unable to create UIO.UIOElements.ButtonModule - check params at the callsite" )
     end
     return uio
 end
 
 
----Create the "status" combinator
----@param signs table?: RSSSigns
----@return UIO.UIOElements.Combinator|nil
-local function createStatusCombinator( signs )
-    local combined = {}
-    
-    if signs ~= nil then
-        for _, sign in pairs( signs ) do
-            table.insert( combined, createRSSElement( sign, RSS_EID_STATUS_TEXT    ,  1 ) )
-            table.insert( combined, createRSSElement( sign, RSS_EID_STATUS_TEXT + 1,  0 ) )
-            table.insert( combined, createRSSElement( sign, RSS_EID_STATUS_TEXT + 2, -1 ) )
-        end
-    end
-    
-    local combinator = UIO.UIOElements.Combinator.create( combined )
-    
-    return combinator
-end
-
-
 ---Create a basic RSSElement with optional true/false state colors and control
----@param signs? table: The RSSSigns
----@param index number: The index of the element on the sign
----@param ctrue table?: {r,g,b,a} color table for "true" state
----@param cfalse table?: {r,g,b,a} color table for "false" state
----@return (UIO.UIOElements.Combinator)?
+---@param signs table The RSSSigns
+---@param index integer The index of the Element on the sign
+---@param ctrue? Color Color for "true" state
+---@param cfalse? Color Color for "false" state
+---@return UIO.UIOElements.Combinator
 local function createSimpleDisplayCombinator( signs, index, ctrue, cfalse )
     local combined = {}
     local addStateColor = ( ctrue ~= nil )and( cfalse ~= nil )
     
-    if signs ~= nil then
-        for _, sign in pairs( signs ) do
-            local uio = createRSSElement( sign, index,  0 )
-            if addStateColor then
-                UIO.UIOElement.Extensions.AddBoolStateColours( uio, ctrue, cfalse )
-            end
-            table.insert( combined, uio )
+    for _, sign in pairs( signs ) do
+        local uio = createRSSElement( sign, index,  0 )
+        if addStateColor then
+            UIO.UIOElement.Extensions.AddBoolStateColours( uio, ctrue, cfalse )
         end
+        table.insert( combined, uio )
     end
     
     local combinator = UIO.UIOElements.Combinator.create( combined )
@@ -1004,21 +1030,31 @@ local function createSimpleDisplayCombinator( signs, index, ctrue, cfalse )
 end
 
 
-local function createUserControlCombinator( signs, panels, iconIndex, buttonPos, iconColorHigh, iconColorLow, buttonColorHigh, buttonColorLow, labelIndex )
+---Create a "user control combinator" - the buttons and icons used for user input
+---@param signs? table The RSSSigns
+---@param panels? table The ModulePanels holding the Button Modules
+---@param ieIndex? integer The index of the Image Element on the sign
+---@param bPos? array The [x,y] position of the Button Module on the panel
+---@param ictrue? Color Color for the Image Element "true" state
+---@param icfalse? Color Color for the Image Element "false" state
+---@param bctrue? Color Color for the Button Module "true" state
+---@param bcfalse? Color Color for the Button Module "false" state
+---@param leIndex? integer The index of the Text Element on the sign
+local function createUserControlCombinator( signs, panels, ieIndex, bPos, ictrue, icfalse, bctrue, bcfalse, leIndex )
     local combined = {}
-    local hasIcon = iconIndex ~= nil and type( iconIndex ) == "number"
-    local hasLabel = labelIndex ~= nil and type( labelIndex ) == "number"
-    local hasButton = buttonPos ~= nil and type( buttonPos ) == "table"
+    local hasIcon = ieIndex ~= nil and type( ieIndex ) == "number"
+    local hasLabel = leIndex ~= nil and type( leIndex ) == "number"
+    local hasButton = bPos ~= nil and type( bPos ) == "table"
     
     if signs ~= nil then
         for _, sign in pairs( signs ) do
             if hasIcon then
-                local uio = createRSSElement( sign, iconIndex,  0 )
-                UIO.UIOElement.Extensions.AddBoolStateColours( uio, iconColorHigh, iconColorLow )
+                local uio = createRSSElement( sign, ieIndex,  0 )
+                UIO.UIOElement.Extensions.AddBoolStateColours( uio, ictrue, icfalse )
                 table.insert( combined, uio )
             end
             if hasLabel then
-                local uio = createRSSElement( sign, labelIndex,  0 )
+                local uio = createRSSElement( sign, leIndex,  0 )
                 table.insert( combined, uio )
             end
         end
@@ -1027,12 +1063,12 @@ local function createUserControlCombinator( signs, panels, iconIndex, buttonPos,
     if panels ~= nil then
         for _, panel in pairs( panels ) do
             if hasButton then
-                local button = panel:getModule( buttonPos[ 1 ], buttonPos[ 2 ] )
+                local button = panel:getModule( bPos[ 1 ], bPos[ 2 ] )
                 if button == nil then
-                    computer.panic( "Module Panel is missing button at { " .. tostring( buttonPos[ 1 ] ).. ", " .. tostring( buttonPos[ 2 ] ) .. " }!\n\tPanel : " .. panel.id .. "\n" .. debug.traceback() )
+                    HypertubeNode.panicNode( true, "Cannot find button", string.format( "\tPosition = %s\n\tPanel = %s", Vector2d.ToString( bPos ), panel.id ) )
                 end
                 local uio = createButtonModule( button )
-                UIO.UIOElement.Extensions.AddBoolStateColours( uio, buttonColorHigh, buttonColorLow )
+                UIO.UIOElement.Extensions.AddBoolStateColours( uio, bctrue, bcfalse )
                 table.insert( combined, uio )
             end
         end
@@ -1051,6 +1087,7 @@ end
 
 
 ---Create the array of RSSElements to use for the options list data
+---@param signs table The RSSSigns
 local function createListOptUIOElements( signs )
     for idx = RSS_EID_LIST_FIRST, RSS_EID_LIST_LAST do
         listOpt.listUIOElements[ idx ] = createSimpleDisplayCombinator( signs, idx, Color.WHITE, Color.GREY_0125 )
@@ -1060,6 +1097,8 @@ end
 
 
 
+---Calculate the timestamp to wait until after broadcasting the network routing programming and receiving responses from all nodes before showing the timeout status message
+---@return number The millisecond timeout value - see computer.millis()
 local function calculateNetworkTimeoutTimestamp()
     return computer.millis() + HypertubeNode.hyper_network.size * Network.Default.TIMEOUT_PER_NODE
 end
@@ -1067,8 +1106,8 @@ end
 
 
 
----Changes the mode of the "Compute Route" button from "normal" A->B to "quick return" B->A of a programmed route
----@param aToB boolean: (true) Normal mode, (false) reverse route mode
+---Updates the Compute Route combinator
+---@param aToB boolean true - "Compute Route", false - "Quick Return"
 function HypertubeNode.changeComputeRouteMode( aToB )
     if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return end
     if aToB == nil or type( aToB ) ~= "boolean" then
@@ -1084,29 +1123,93 @@ end
 
 
 
-local function checkRSSSignElementHashes()
+---Checks the map hash on each RSSSign
+---@return boolean true if all signs have the proper map hash, false for any other reason
+local function checkRSSSignElementsAndMapHash()
     if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return false end
     if HypertubeNode.signs == nil or #HypertubeNode.signs == 0 then return false end
     local mapHash = HypertubeNode.mapHash
-    if mapHash == nil then return false end
+    if mapHash == nil then return false end -- How can we check if the signs are correct if we don't know what correct is?
+    if not RSSBuilder.SignLayout.isSignLayout( signLayout ) then return false end
+    
+    print( string.format( "checkRSSSignElementsAndMapHash() : %s = %s", HypertubeNode.SETTING_MAPHASH, mapHash ) )
+    
+    local result = true -- we hope...
     
     for _, sign in pairs( HypertubeNode.signs ) do
         
         local signSettings = readNetworkComponentSettings( sign )
-        if signSettings == nil then return false end
+        local signMapHash = signSettings[ HypertubeNode.SETTING_MAPHASH ] or 'nil'
+        local hashMatch = signMapHash == mapHash
+        local layoutMatch, layoutReason = signLayout:signMatches( sign )
         
-        local signMapHash = signSettings[ "mapHash" ]
-        if signMapHash == nil then return false end
-        if signMapHash ~= mapHash then return false end
+        result = ( result )and( hashMatch )and( layoutMatch )
         
-        print( "signMapHash = " .. signMapHash )
-        
+        print( "sign: " .. sign.internalName )
+        print( "\tlocation = " .. Vector3f.ToString( sign.location ) )  -- Seriously, how many signs are you building for one destination that we need to worry about this?
+        print( string.format( "\t%s = %s", HypertubeNode.SETTING_MAPHASH, signMapHash ) )
+        if not hashMatch then print( "\thash mismatch" ) end
+        if not layoutMatch then print( "\tlayout mismatch - " .. layoutReason ) end
     end
     
-    return true
+    return result
 end
 
 
+
+
+---Generate the SignLayout and update the UIO Elements.  Note, this explicitly access the RSS Sign Elements through the raw API instead of through a UIO Combinator as we want to be able to update the status before the combinator will be created.
+---@param clearStatus boolean Clear the status once the layout has been updated?
+local function refreshRSSSignsFromLayout( clearStatus )
+    local signs = HypertubeNode.signs
+    if signs == nil or #signs == 0 then return end
+    local newLayoutState = LAYOUT_INCOMPLETE
+    
+    if signLayout == nil then
+        signLayout = generateBaseRSSSignLayout()
+        if signLayout == nil then return end    -- Just incase we change it to not panic later (which we should)
+        generateRSSSignImport( "rssimport_" .. signLayout.signSize ..  ".txt" )
+        newLayoutState = LAYOUT_BASE
+    end
+    
+    local networkValid, reason = isNetworkMapValid()
+    --print( networkValid, reason )
+    
+    if networkValid then
+        if not mapGenerated then
+            mapGenerated = generateMapAndAppendSignLayout()
+            if mapGenerated then
+                generateRSSSignImport( "rssimport_" .. signLayout.signSize ..  "_map.txt" )
+                signMapValid = checkRSSSignElementsAndMapHash()
+                newLayoutState = LAYOUT_MAP
+            end
+        end
+    end
+    
+    if lastLayoutState ~= newLayoutState then
+        for _, sign in pairs( signs ) do
+            -- Enforce the layout of the main elements
+            signLayout:apply( sign )
+            
+            -- Quickly hide extra elements behind the blackground
+            for eid = RSS_EID_BLACKGROUND + 1, sign:GetNumOfElements() - 1 do
+                sign:Element_SetZIndex( RSS_EZINDEX_HIDDEN, eid )
+            end
+            
+        end
+        lastLayoutState = newLayoutState
+    end
+    
+    if clearStatus then
+        HypertubeNode.setNodeStatus() -- Clear the status which will have been reset to the layout default
+    end
+end
+
+
+
+
+---Verify the network map and update the Map Toggle combinator as appropriate
+---@param showMap boolean Enable map view (true, if possible) or list view (false, or if not possible to view the map for any reason)
 function HypertubeNode.updateMapToggleMode( showMap )
     if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return end
     if showMap == nil then showMap = HypertubeNode.UIO.MapToggle.showMap end
@@ -1117,28 +1220,11 @@ function HypertubeNode.updateMapToggleMode( showMap )
     --print( networkValid, reason )
     
     if not signMapValid then
-        if networkValid then
-            local layout = generateRSSSignBaseData()
-            mapGenerated = appendRSSSignMapData( layout )
-            if mapGenerated then
-                generateRSSSignImport( layout, "rssimport_" .. layout.signSize ..  "_map.txt" )
-                signMapValid = mapGenerated and checkRSSSignElementHashes()
-                if signMapValid then
-                    for _, sign in pairs( HypertubeNode.signs ) do
-                        -- Enforce the layout of the main elements
-                        layout:apply( sign )
-                        -- Quickly hide extra elements behind the blackground
-                        for eid = RSS_EID_BLACKGROUND + 1, sign:GetNumOfElements() - 1 do
-                            sign:Element_SetZIndex( RSS_STATUS_ZINDEX_HIDDEN, eid )
-                        end
-                    end
-                    HypertubeNode.UIO.NodeStatus:setZIndex( RSS_STATUS_ZINDEX_STATUS_BACK )
-                end
-            end
-        end
-        showMap = showMap and signMapValid
-        uioState = showMap
+        refreshRSSSignsFromLayout( true )
     end
+    
+    showMap = showMap and signMapValid
+    uioState = showMap
     
     local t = ''
     local canExport = ( mapGenerated ) and ( not exportedTemplate ) and ( ____Disk_UUID ~= nil and ____Disk_UUID ~= '' )
@@ -1175,14 +1261,14 @@ end
 
 
 ---Changes the map/list display mode
----@param showMap boolean: (true) Show the map, (false) hide the map, show the list
+---@param showMap boolean Show the map (true); hide the map, show the list (false)
 function HypertubeNode.toggleMapDisplay( showMap )
     HypertubeNode.updateMapToggleMode( showMap )
 end
 
 
 
----Draw the network map, can only do this if the map has been generated and the sign has the correct element layout
+---Draw the network map, can only do this if the map has been generated and the sign has the correct SignLayout
 function HypertubeNode.UIO.drawMap()
     if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return end
     if HypertubeNode.map == nil or type( HypertubeNode.map ) ~= "table" then return end
@@ -1196,11 +1282,11 @@ function HypertubeNode.UIO.drawMap()
         local route = HypertubeNode.route
         local routeSet = route ~= nil
         
-        listOpt.listUp:setZIndex( RSS_STATUS_ZINDEX_LIST_BACK )
-        listOpt.listDn:setZIndex( RSS_STATUS_ZINDEX_LIST_BACK )
+        listOpt.listUp:setZIndex( RSS_EZINDEX_LIST_BACK )
+        listOpt.listDn:setZIndex( RSS_EZINDEX_LIST_BACK )
         
         for _, uio in pairs( listOpt.listUIOElements ) do
-            uio:setZIndex( RSS_STATUS_ZINDEX_LIST_BACK )
+            uio:setZIndex( RSS_EZINDEX_LIST_BACK )
         end
         
         for mID, mData in pairs( HypertubeNode.map ) do
@@ -1210,7 +1296,7 @@ function HypertubeNode.UIO.drawMap()
             local eID = mData.element
             local zOff = mData.zOffset
             
-            rssElementSetZIndex( signs, eID, RSS_STATUS_ZINDEX_LIST_FRONT, zOff )
+            rssElementSetZIndex( signs, eID, RSS_EZINDEX_LIST_FRONT, zOff )
             
             local color = Color.GREY_0125
             local v = tonumber( mID )
@@ -1265,21 +1351,24 @@ function HypertubeNode.UIO.drawMap()
             --{ element = eID, zOffset = zOff }
             local eID = mData.element
             local zOff = mData.zOffset
-            rssElementSetZIndex( signs, eID, RSS_STATUS_ZINDEX_LIST_BACK, zOff )
+            rssElementSetZIndex( signs, eID, RSS_EZINDEX_LIST_BACK, zOff )
         end
         
         for _, uio in pairs( listOpt.listUIOElements ) do
-            uio:setZIndex( RSS_STATUS_ZINDEX_LIST_FRONT )
+            uio:setZIndex( RSS_EZINDEX_LIST_FRONT )
         end
         
-        listOpt.listUp:setZIndex( RSS_STATUS_ZINDEX_LIST_FRONT )
-        listOpt.listDn:setZIndex( RSS_STATUS_ZINDEX_LIST_FRONT )
+        listOpt.listUp:setZIndex( RSS_EZINDEX_LIST_FRONT )
+        listOpt.listDn:setZIndex( RSS_EZINDEX_LIST_FRONT )
         
     end
     
     
 end
 
+
+
+---Event UIO callback
 local function triggerMapToggle( edata )
     --print( "Trigger: mapToggle" )
     --if not listOpt.scrollUp:getState() then return end
@@ -1291,6 +1380,7 @@ end
 
 
 
+---Event UIO callback
 local function triggerListOptScrollUp( edata )
     --print( "Trigger: scrollUp" )
     --if not listOpt.scrollUp:getState() then return end
@@ -1312,6 +1402,7 @@ local function triggerListOptScrollUp( edata )
 end
 
 
+---Event UIO callback
 local function triggerListOptScrollDn( edata )
     --print( "Trigger: scrollDn" )
     --if not listOpt.scrollDn:getState() then return end
@@ -1340,6 +1431,7 @@ end
 
 
 
+---Event UIO callback
 local function triggerComputeRoute( edata )
     --print( "Trigger: ComputeRoute" )
     --if not HypertubeNode.UIO.ComputeRoute:getState() then return end
@@ -1404,6 +1496,7 @@ local function triggerComputeRoute( edata )
 end
 
 
+---Event UIO callback
 local function triggerResetRouting( edata )
     --print( "Trigger: ResetRouting" )
     --if not HypertubeNode.UIO.ResetRouting:getState() then return end
@@ -1413,6 +1506,7 @@ end
 
 
 
+---Event UIO callback
 local function triggerResetNetwork( edata )
     --print( "Trigger: ResetNetwork" )
     Network.sendAdminReset( true )
@@ -1421,6 +1515,10 @@ end
 
 
 
+---Set the text property of the UIO Element to the Node name from the Node vertex
+---@param uio UIOElement
+---@param vertex number
+---@param default string What to set if vertex is invalid (unknown to this node)
 local function setUIOElementTextFromVertex( uio, vertex, default )
     local text = default
     if vertex == HypertubeNode.vertex then
@@ -1438,6 +1536,10 @@ end
 
 
 
+---Block player access to the user buttons controlling the node/network
+---@param bScroll boolean
+---@param bCompute boolean
+---@param bReset boolean
 function HypertubeNode.setControlUIOSignalBlockStates( bScroll, bCompute, bReset )
     if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return end
     listOpt.scrollUp:setSignalBlockState( bScroll )
@@ -1447,36 +1549,111 @@ function HypertubeNode.setControlUIOSignalBlockStates( bScroll, bCompute, bReset
 end
 
 
+
+
+---Set the Status area, bringing it to the front or hiding it
+---@param text? string Text to set, nil to hide the Status area
+---@param fcolor? Color Foreground color (text and border)
+---@param bcolor? Color Background color
 function HypertubeNode.setNodeStatus( text, fcolor, bcolor )
-    if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return end
-    local zIndex = RSS_STATUS_ZINDEX_STATUS_BACK
+    --if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return end
+    local signs = HypertubeNode.signs
+    if signs == nil or #signs == 0 then return end
+    
+    local zIndex = RSS_EZINDEX_STATUS_BACK
     --print( text )
     if text ~= nil and text ~= '' then
-        zIndex = RSS_STATUS_ZINDEX_STATUS_FRONT
-        HypertubeNode.UIO.NodeStatus:setText( text )
-        if fcolor ~= nil then   -- Only set the text and border element colors
-            --print( 'HypertubeNode.setStatusState() fcolor = ' .. Color.ToString( fcolor ) )
-            HypertubeNode.UIO.NodeStatus:setForeColorEx( fcolor, { zOffset =  1 } )
-            HypertubeNode.UIO.NodeStatus:setForeColorEx( fcolor, { zOffset =  0 } )
-        end
-        if bcolor ~= nil then   -- only set the background image color
-            --print( 'HypertubeNode.setStatusState() bcolor = ' .. Color.ToString( bcolor ) )
-            HypertubeNode.UIO.NodeStatus:setForeColorEx( bcolor, { zOffset = -1 } )
+        zIndex = RSS_EZINDEX_STATUS_FRONT
+        for _, sign in pairs( signs ) do
+            sign:Element_SetText( text, RSS_EID_STATUS_TEXT )
+            if fcolor ~= nil then   -- Set the text and border element colors
+                --print( 'HypertubeNode.setStatusState() fcolor = ' .. Color.ToString( fcolor ) )
+                sign:Element_SetColor( fcolor, RSS_EID_STATUS_TEXT     )
+                sign:Element_SetColor( fcolor, RSS_EID_STATUS_TEXT + 1 )
+            end
+            if bcolor ~= nil then   -- Set the background image color
+                --print( 'HypertubeNode.setStatusState() bcolor = ' .. Color.ToString( bcolor ) )
+                sign:Element_SetColor( bcolor, RSS_EID_STATUS_TEXT + 2 )
+            end
         end
     end
-    HypertubeNode.UIO.NodeStatus:setZIndex( zIndex )
+    
+    for _, sign in pairs( signs ) do
+        sign:Element_SetZIndex( zIndex    , RSS_EID_STATUS_TEXT     )
+        sign:Element_SetZIndex( zIndex - 1, RSS_EID_STATUS_TEXT + 1 )
+        sign:Element_SetZIndex( zIndex - 2, RSS_EID_STATUS_TEXT + 2 )
+    end
 end
 
 
+---"Friendly" way to panic the node, may or may not actually call computer.panic()
+---@param truepanic boolean Is this a true panic (true = call computer.panic()) or not (false = "we interrupt this program to annoy you and make things generally irritating")
+---@param message string The Status message to display on the signs and to write to the console/computer.panic()
+---@param extra? string Additional information added to the console/panic message
+function HypertubeNode.panicNode( truepanic, message, extra )
+    truepanic = truepanic or false
+    
+    local fcolor
+    local prefix
+    if truepanic then
+        prefix = "ERROR"
+        fcolor = Color.RED_SIGN_LOW
+    else
+        prefix = "Warning"
+        fcolor = Color.YELLOW_SIGN_BRDRTEXT
+    end
+    
+    HypertubeNode.setNodeStatus( message, fcolor, Color.GREY_0125 )
+    
+    extra = extra or ''
+    local m = string.format( '%s:\n%s\n%s\n%s', prefix, message, extra, debug.traceback() )
+    if truepanic then
+        computer.panic( m )
+    else
+        print( m )
+        computer.beep()
+    end
+end
+
+
+
+
+---Initialize this HypertubeNode static instance (AKA GodObject)
 function HypertubeNode.init()
     
-    -- Get name, having a name tells us what subcomponents this node requires and how this node is handled
+    -- Get name, having a name tells us what Component Network objects this node requires and how this node is handled
     getNodeName()
+    
+    -- Get the RSS Sign[s] for Destination Nodes
+    local signs = component.getComponentsByClass( ClassGroup.Displays.Signs.ReallySimpleSigns.All )
+    HypertubeNode.signs = signs
+    if HypertubeNode.mode == HypertubeNode.MODE_DESTINATION then
+        if signs == nil or #signs < 1 then
+            HypertubeNode.panicNode( true, "Missing Really Simple Sign(s)!", "Destination nodes require at least one sign!" )
+        end
+        
+        -- Give all the signs an ID on the network and make it obvious they are possibly missing their map data (by way of the mapHash)
+        for i, sign in pairs( signs ) do
+            local signSettings = readNetworkComponentSettings( sign )
+            if sign.nick == nil or sign.nick == '' or signSettings[ HypertubeNode.SETTING_MAPHASH ] == nil then    -- Don't need to do this, just want the sign to show up neatly when looking at the Component Network on the plug/pole/whatever
+                signSettings[ "RSSSign" ] = tostring( i )
+                signSettings[ HypertubeNode.SETTING_MAPHASH ] = 'nil'
+                writeNetworkComponentSettings( sign, signSettings )
+            end
+        end
+        
+        refreshRSSSignsFromLayout( false ) -- No longer using a combinator for status as we may (do) need to access it before the UIO combinators are created
+        
+    else
+        if signs ~= nil and #signs > 0 then
+            HypertubeNode.panicNode( true, string.format( "Found %d Really Simple Sign(s)!", #signs ), "Junctions should not have any Really Simple Sign(s)!" )
+        end
+    end
     
     -- Get vertex index, this must be unique in the network map; that will be validated later once we start IDENTing with other nodes
     getNodeVertex()
     
-    -- Make sure this node has an isolated Component network before we start looking for other components
+    -- Make sure this node has an isolated Component Network before we start looking for other components
     getNodeRouter()
     
     -- Get the remote nodes we connect to
@@ -1484,50 +1661,43 @@ function HypertubeNode.init()
     
     
     -- Get the NetworkCard in the Computer
-    HypertubeNode.networkcard = computer.getPCIDevicesByClass( ClassGroup.Networking.IntraNet.All )[ 1 ]
-    if HypertubeNode.networkcard == nil then
-        computer.panic( "Missing NetworkCard!" )
+    local nics = computer.getPCIDevicesByClass( ClassGroup.Networking.IntraNet.All )
+    local ncount = #nics
+    if nics == nil or ncount < 1 then
+        HypertubeNode.panicNode( true, "Missing NetworkCard!", "One NetworkCard is required." )
     end
-    
-    
-    -- Get the RSS Sign[s] for Destinations
-    local signs = component.getComponentsByClass( ClassGroup.Displays.Signs.ReallySimpleSigns.All )
-    if HypertubeNode.mode == HypertubeNode.MODE_DESTINATION then
-        if signs == nil or #signs < 1 then
-            computer.panic( "Destination Node is missing Really Simple Sign(s)!" )
-        end
-        
-        HypertubeNode.signs = signs
-        
-        -- Load the element layout
-        local layout = generateRSSSignBaseData()
-        generateRSSSignImport( layout, "rssimport_" .. layout.signSize ..  ".txt" )
-        
-        for _, sign in pairs( signs ) do
-            -- Enforce the layout of the main elements
-            layout:apply( sign )
-            -- Quickly hide extra elements behind the blackground
-            for eid = RSS_EID_BLACKGROUND + 1, sign:GetNumOfElements() - 1 do
-                sign:Element_SetZIndex( RSS_STATUS_ZINDEX_HIDDEN, eid )
+    if ncount > 1 then
+        for idx, nic in pairs( nics ) do
+            if nic.nick == nil or nic.nick == '' then -- or nick.nack == "paddy whack" ... err ...
+                nic.nick = string.format( 'NetworkCard="%d"', idx )
             end
-            sign:Element_SetText( 'Initializing...', RSS_EID_STATUS_TEXT )
         end
-        
     else
-        if signs ~= nil and #signs > 0 then
-            computer.panic( "Junction Nodes should not have any Really Simple Sign(s)!" )
-        end
+        nics[ 1 ].nick = "NetworkCard"
     end
+    local nic = nics[ 1 ]   -- Use the first nic, extras are pointless
+    if ncount > 1 then
+        HypertubeNode.panicNode( false, "Extra NetworkCards detected", "Only one NetworkCard is required, using " .. nic.nick )
+    end
+    HypertubeNode.networkcard = nic
+    
     
     -- Get the Sizeable Panel[s] holding control buttons for Destinations
     local panels = component.getComponentsByClass( ClassGroup.ModulePanels.SizeableModulePanel )
     if HypertubeNode.mode == HypertubeNode.MODE_DESTINATION then
         if panels == nil or #panels < 1 then
-            computer.panic( "Destination Node is missing Sizeable Panel[s]!" )
+            HypertubeNode.panicNode( true, "Missing Sizeable Panel[s]!", "Destination nodes required at least one (1) SizeableModulePanel sized one (1) wide and five (5) tall." )
         end
+        
+        for i, panel in pairs( panels ) do
+            if panel.nick == nil or panel.nick == '' then
+                panel.nick = string.format( 'UserPanel="%d"', i )
+            end
+        end
+        
     else
         if panels ~= nil and #panels > 0 then
-            computer.panic( "Junction Nodes should not have any Sizeable Panel[s]!" )
+            HypertubeNode.panicNode( true, "Junctions should not have any Sizeable Panel[s]!" )
         end
     end
     HypertubeNode.panels = panels
@@ -1536,7 +1706,12 @@ function HypertubeNode.init()
     -- Get the 1x1 Panel[s] holding the HypertubeNetwork reset button for the node
     local adminpanels = component.getComponentsByClass( { ClassGroup.ModulePanels.MCP_1Point_C, ClassGroup.ModulePanels.MCP_1Point_Center_C } )
     if adminpanels == nil or #adminpanels < 1 then
-        computer.panic( "Node is missing 1x1 Module Panel[s]!  Destinations and Junctions should all have a local Network Reset button!" )
+        HypertubeNode.panicNode( true, "Missing 1x1 Module Panel!", "All nodes must have a Network Reset button!" )
+    end
+    for i, panel in pairs( adminpanels ) do
+        if panel.nick == nil or panel.nick == '' then
+            panel.nick = string.format( 'AdminPanel="%d"', i )
+        end
     end
     HypertubeNode.adminpanels = adminpanels
     
@@ -1560,10 +1735,6 @@ function HypertubeNode.init()
     
     if HypertubeNode.mode == HypertubeNode.MODE_DESTINATION then
         
-        -- Node Status
-        HypertubeNode.UIO.NodeStatus = createStatusCombinator( signs )
-        HypertubeNode.setNodeStatus( 'Initializing...', Color.WHITE, Color.CYAN_SIGN_BACKGROUND )
-        
         -- Current Location
         HypertubeNode.UIO.LocStart = createSimpleDisplayCombinator( signs, RSS_EID_LOC_START )
         setUIOElementTextFromVertex( HypertubeNode.UIO.LocStart, HypertubeNode.vertex, "Error" )
@@ -1582,7 +1753,7 @@ function HypertubeNode.init()
         )
         HypertubeNode.toggleMapDisplay( false )   -- Make sure we are in the correct mode initially
         if not HypertubeNode.UIO.MapToggle:setSignalHandler( "Trigger", triggerMapToggle ) then
-            computer.panic( "Could register for 'Trigger' signal on HypertubeNode.UIO.MapToggle" )
+            HypertubeNode.panicNode( true, "Internal Software Error", "Could not register for 'Trigger' signal on HypertubeNode.UIO.MapToggle" )
         end
         
         -- Compute Route
@@ -1596,7 +1767,7 @@ function HypertubeNode.init()
         HypertubeNode.changeComputeRouteMode( true )   -- Make sure we are in the correct mode initially
         
         if not HypertubeNode.UIO.ComputeRoute:setSignalHandler( "Trigger", triggerComputeRoute ) then
-            computer.panic( "Could register for 'Trigger' signal on HypertubeNode.UIO.ComputeRoute" )
+            HypertubeNode.panicNode( true, "Internal Software Error", "Could not register for 'Trigger' signal on HypertubeNode.UIO.ComputeRoute" )
         end
         
         -- Reset Route
@@ -1608,7 +1779,7 @@ function HypertubeNode.init()
         )
         
         if not HypertubeNode.UIO.ResetRouting:setSignalHandler( "Trigger", triggerResetRouting ) then
-            computer.panic( "Could register for 'Trigger' signal on HypertubeNode.UIO.ResetRouting" )
+            HypertubeNode.panicNode( true, "Internal Software Error", "Could not register for 'Trigger' signal on HypertubeNode.UIO.ResetRouting" )
         end
         
         --Destination List Options
@@ -1624,7 +1795,7 @@ function HypertubeNode.init()
         )
         
         if not listOpt.scrollUp:setSignalHandler( "Trigger", triggerListOptScrollUp ) then
-            computer.panic( "Could register for 'Trigger' signal on HypertubeNode.UIO.ListOpt.scrollUp" )
+            HypertubeNode.panicNode( true, "Internal Software Error", "Could not register for 'Trigger' signal on HypertubeNode.UIO.ListOpt.scrollUp" )
         end
         
         
@@ -1635,12 +1806,13 @@ function HypertubeNode.init()
         )
         
         if not listOpt.scrollDn:setSignalHandler( "Trigger", triggerListOptScrollDn ) then
-            computer.panic( "Could register for 'Trigger' signal on HypertubeNode.UIO.ListOpt.scrollDn" )
+            HypertubeNode.panicNode( true, "Internal Software Error", "Could not register for 'Trigger' signal on HypertubeNode.UIO.ListOpt.scrollDn" )
         end
         
         
         createListOptUIOElements( signs )
         
+        HypertubeNode.UIO.ListOpt.resetElements()
         
     end
     
@@ -1654,7 +1826,7 @@ function HypertubeNode.init()
     )
     
     if not HypertubeNode.UIO.ResetNetwork:setSignalHandler( "Trigger", triggerResetNetwork ) then
-        computer.panic( "Could register for 'Trigger' signal on HypertubeNode.UIO.ResetNetwork" )
+        HypertubeNode.panicNode( true, "Internal Software Error", "Could not register for 'Trigger' signal on HypertubeNode.UIO.ResetNetwork" )
     end
     
     
@@ -1664,13 +1836,14 @@ function HypertubeNode.init()
     
     
     if HypertubeNode.mode == HypertubeNode.MODE_DESTINATION then
-        HypertubeNode.UIO.NodeStatus:setZIndex( RSS_STATUS_ZINDEX_STATUS_BACK )
+        HypertubeNode.setNodeStatus()
     end
 end
 
 
 
 
+---Dispatch events to the proper subsystem
 function HypertubeNode.handleEvent( edata )
     if edata == nil then return false end
     if edata[ 1 ] == nil then return false end
@@ -1686,10 +1859,10 @@ end
 
 
 
---- Extracts the previous and next vertexes relative to this vertex from a vertex path
----@param path table: indexed path from start to destination
----@param vertex number: This vertex
----@return number?, number?: previous and next vertex IDs
+---Extracts the previous and next vertexes relative to this vertex from a vertex path
+---@param path table indexed path from start to destination
+---@param vertex number This vertex
+---@return number, number previous and next vertex IDs; either may be nil if vertex is the begining or end of the path
 local function extract_edges( path, vertex )
     for i, v in ipairs( path ) do
         if v == vertex then
@@ -1700,6 +1873,7 @@ local function extract_edges( path, vertex )
 end
 
 
+---Reset all switches on the same Component Network as this computer
 function HypertubeNode.resetSwitches()
     local switches = component.getComponentsByClass( ClassGroup.CircuitSwitches.All )
     for _, switch in pairs( switches ) do
@@ -1708,6 +1882,7 @@ function HypertubeNode.resetSwitches()
 end
 
 
+---Set the switch states for this node based on the programmed routing
 function HypertubeNode.setSwitches()
     local prev, after = extract_edges( HypertubeNode.route, HypertubeNode.vertex )
     local switches = component.getComponentsByClass( ClassGroup.CircuitSwitches.All )
@@ -1726,6 +1901,7 @@ function HypertubeNode.setSwitches()
 end
 
 
+---Update the UIO Elements
 function HypertubeNode.UIO.update()
     if HypertubeNode.mode ~= HypertubeNode.MODE_DESTINATION then return end
     

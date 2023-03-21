@@ -3,6 +3,7 @@
 local Vector2f = _G[ "Vector2f" ] or {
     x = 0.0,
     y = 0.0,
+    pattern = '{x=%1.6f,y=%1.6f}',
 }
 _G[ "Vector2f" ] = Vector2f
 Vector2f.__index = Vector2f
@@ -52,6 +53,35 @@ function Vector2f.equals( a, b )
     -- Don't test for table equality, at best is saves one comparison, worst (and most likely) it adds one
     return ( a.x == b.x )and( a.y == b.y )
 end
+
+
+
+
+---Return this Vector2f as a string using the supplied pattern or default Vector2f.pattern
+---@param pattern? string Optional pattern to use for string.format()
+---@return string formatted string
+function Vector2f:ToString( pattern )
+    pattern = pattern or self.pattern
+    return string.format( pattern, self.x, self.y )
+end
+
+---Return the Vector2f? as a string using the supplied pattern or default Vector2f.pattern
+---@param v table vector
+---@param pattern? string Optional pattern to use for string.format()
+---@return string formatted string
+function Vector2f.ToString( v, pattern )
+    if v == nil then return 'nil' end
+    local vt = type( v )
+    if vt ~= "table" and vt ~= "userdata" then return 'invalid' end
+    local x = v.x or v.X or v[ 1 ]
+    local y = v.y or v.Y or v[ 2 ]
+    if x == nil or type( x ) ~= "number"
+    or y == nil or type( y ) ~= "number"
+    then return 'invalid' end
+    pattern = pattern or Vector2f.pattern
+    return string.format( pattern, x, y )
+end
+
 
 
 

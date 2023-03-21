@@ -9,12 +9,17 @@ print( "\nInitialising HypertubeNode.Network\n\nLast Update: " .. UPDATED .. "\n
 
 
 
+----------------------------------------------------------------
+
+
 -- Require the core components
 local CoreNetwork           = require( "/lib/CoreNetwork.lua", ____RemoteCommonLib )
 local Color = require( "/lib/Colors.lua" )
 
 
 
+
+----------------------------------------------------------------
 
 
 -- The Hypertube networking component
@@ -38,22 +43,28 @@ Network.PID_ROUTE_RESET         = 0x201
 Network.PID_ROUTE_NODE_SET      = 0x202
 
 
-
 Network.ERROR_MISSING_NODE_IDENT = 0x1000
 
 
+
+
+----------------------------------------------------------------
+
+
 ---Register for event handling with the given NetworkCard (PCI Device).  Call this in your init function once you've gotten the NetworkCards in the computer.
----@param net userdata: NetworkCard (PCI Device) to add to the event system
+---@param net userdata NetworkCard (PCI Device) to add to the event system
 function Network.listenForNetworkEventsOn( net )
     CoreNetwork.listenForNetworkEventsOn( net )
 end
 
 ---NetworkMessage dispatcher; calls the appropriate handler for the packet on the port.  Call this in your main loop.
----@param edata table: {event.pull()}
----@return boolean: true, event was handled, false otherwise
+---@param edata table table {event.pull()}
+---@return boolean true, event was handled, false otherwise
 function Network.handleEvent( edata )
     return CoreNetwork.handleEvent( edata )
 end
+
+
 
 
 ----------------------------------------------------------------
@@ -145,7 +156,7 @@ function Network.handleAdminIdent( net, sender, payload )
     
     -- Update the display
     if HypertubeNode.mode == HypertubeNode.MODE_DESTINATION then
-        HypertubeNode.UIO.ListOpt.setListData( HypertubeNode.nodes )
+        HypertubeNode.UIO.ListOpt.setListData()
         HypertubeNode.updateMapToggleMode()
     end
     
@@ -156,6 +167,9 @@ CoreNetwork.registerPacketHandler(
     Network.port,
     Network.PID_ADMIN_IDENT,
     Network.handleAdminIdent )
+
+
+
 
 ----------------------------------------------------------------
 --- ADMIN_RESET
@@ -204,6 +218,9 @@ CoreNetwork.registerPacketHandler(
     Network.PID_ADMIN_RESET,
     Network.handleAdminReset )
 
+
+
+
 ----------------------------------------------------------------
 --- PID_ADMIN_NODE_ERROR
 ---
@@ -226,25 +243,26 @@ function Network.sendAdminNodeError( remote, code, details )
     }
     local packet = CoreNetwork.encodePacket( Network.PID_ADMIN_NODE_ERROR, payload )
     HypertubeNode.networkcard:send( remote, Network.port, packet )
-    print( nodeErrorString( payload ) )
-    computer.beep()
+    HypertubeNode.setControlUIOSignalBlockStates( true, true, true )
+    HypertubeNode.panicNode( false, "Network Error", nodeErrorString( payload ) )
 end
 
 
 function Network.handleAdminNodeError( net, sender, payload )
+    if payload.vertex == HypertubeNode.vertex then
+        return -- This node already knows
+    end
     HypertubeNode.setControlUIOSignalBlockStates( true, true, true )
-    HypertubeNode.setNodeStatus( 'Nodes report errors, see console log', Color.RED_SIGN_HIGH, Color.GREY_0125 )
-    
-    print( nodeErrorString( payload ) )
-    
-    -- Yell at the player to get their attention
-    computer.beep()
+    HypertubeNode.panicNode( false, "Network Error", nodeErrorString( payload ) )
 end
 
 CoreNetwork.registerPacketHandler(
     Network.port,
     Network.PID_ADMIN_NODE_ERROR,
     Network.handleAdminNodeError )
+
+
+
 
 ----------------------------------------------------------------
 --- ROUTE_COMPUTED
@@ -314,6 +332,8 @@ CoreNetwork.registerPacketHandler(
     Network.handleRouteComputed )
 
 
+
+
 ----------------------------------------------------------------
 --- ROUTE_NODE_SET
 ---
@@ -360,6 +380,8 @@ CoreNetwork.registerPacketHandler(
     Network.handleRouteNodeSet )
 
 
+
+
 ----------------------------------------------------------------
 --- ROUTE_RESET
 ---
@@ -376,7 +398,7 @@ function Network.handleRouteReset( net, sender, payload )
     HypertubeNode.destination = HypertubeNode.UIO.ListOpt.getSelectedDestination() -- Reset to local node selected list option
     HypertubeNode.route = nil                               -- Reset the routing information
     HypertubeNode.resetSwitches()                           -- Turn off all the switches for this node
-    HypertubeNode.setNodeStatus( nil )
+    HypertubeNode.setNodeStatus()
     HypertubeNode.changeComputeRouteMode( true )
     HypertubeNode.setControlUIOSignalBlockStates( false, false, true )
 end
@@ -387,7 +409,6 @@ CoreNetwork.registerPacketHandler(
     Network.handleRouteReset )
 
 ----------------------------------------------------------------
-
 
 
 

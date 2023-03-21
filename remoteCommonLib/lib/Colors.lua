@@ -6,7 +6,7 @@ local Color = {
     g = 0.0,
     b = 0.0,
     a = 0.0,
-    pattern = '{r= %1.6f,g=%1.6f,b=%1.6f,a=%1.6f}',
+    pattern = '{r=%1.6f,g=%1.6f,b=%1.6f,a=%1.6f}',
 }
 Color.__index = Color
 
@@ -102,15 +102,22 @@ function Color:equals( other )
 end
 
 
+---Return this Color as a string using the supplied pattern or default Color.pattern
+---@param pattern? string Optional pattern to use for string.format()
+---@return string formatted string
 function Color:ToString( pattern )
     pattern = pattern or self.pattern
     return string.format( pattern, self.r, self.g, self.b, self.a )
 end
 
+---Return the Color? as a string using the supplied pattern or default Color.pattern
+---@param c table color
+---@param pattern? string Optional pattern to use for string.format()
+---@return string formatted string
 function Color.ToString( c, pattern )
     if c == nil then return 'nil' end
-    if type( c ) ~= "table" then return 'invalid' end
-    if c == nil or type( c ) ~= "table" then return nil end
+    local vt = type( v )
+    if vt ~= "table" and vt ~= "userdata" then return 'invalid' end
     local r = c.r or c.R or c[ 1 ]
     local g = c.g or c.G or c[ 2 ]
     local b = c.b or c.B or c[ 3 ]

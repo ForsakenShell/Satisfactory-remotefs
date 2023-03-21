@@ -10,7 +10,7 @@ local ClassGroup = require( "/lib/classgroups.lua", ____RemoteCommonLib )
 
 
 
----@class RSSElement:UIO.UIOElement
+---@class RSSElement:UIOElement
 local RSSElement = UIO.UIOElement.template(
     "RSSElement",
     ClassGroup.Displays.Signs.ReallySimpleSigns.All,
@@ -101,9 +101,9 @@ end
 
 
 ---Create an UIO.UIOElement for an RSS Sign Element
----@param sign userdata: The RSS Sign
----@param index number: The element index, these are 0-based in the sign
----@return RSSElement?: The UIOElement or nil
+---@param sign userdata The RSS Sign
+---@param index number The element index, these are 0-based in the sign
+---@return RSSElement The UIOElement or nil
 function RSSElement.create( sign, index )
     -- have to validate the sign now so that we can validate the index
     if not UIO.UIOElement.validTarget( RSSElement, sign ) then

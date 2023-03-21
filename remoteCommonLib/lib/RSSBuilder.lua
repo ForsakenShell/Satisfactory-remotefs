@@ -301,7 +301,7 @@ local function SharedData_Apply_mPosition( meta, value, ... )
 end
 
 local function SharedData_Apply_mColourOverwrite( meta, value, ... )
-    if value == nil then return end
+    value = value or Color.WHITE
     local scale, eIndex, sign = unpackApplyFieldMetaExtra( ... )
     sign:Element_SetColor( value, eIndex )
 end
@@ -338,17 +338,14 @@ end
 
 ---Create a new SharedData table for the ElementData.mSharedData
 ---@param o table Table to use initialize SharedData, must pass SharedData_MetaData:isValid( o, false )
----@return SharedData
+---@return SharedData, string SharedData, nil on success; nil, reason on error
 function SharedData.new( o )
     if __internals.DebugMode then
         local result, reason = SharedData_MetaData:isValid( 'o', o, false )
-        if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     setmetatable( o, { __index = SharedData } )
-    return o
+    return o, nil
 end
 
 
@@ -497,17 +494,14 @@ end
 
 ---Create a new TextData table for the ElementData.mTextData
 ---@param o table Table to use initialize TextData, must pass TextData_MetaData:isValid( o, false )
----@return TextData
+---@return TextData, string TextData, nil on success; nil, reason on error
 function TextData.new( o )
     if __internals.DebugMode then
         local result, reason = TextData_MetaData:isValid( 'o', o, false )
-        if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     setmetatable( o, { __index = TextData } )
-    return o
+    return o, nil
 end
 
 
@@ -564,15 +558,12 @@ end
 
 ---Create a new ImageData table for the ElementData.mImageData
 ---@param o table Table to use initialize ImageData, must pass ImageData_MetaData:isValid( o, false )
----@return ImageData
+---@return ImageData, string ImageData, nil on success; nil, reason on error
 function ImageData.new( o )
     local result, reason = ImageData_MetaData:isValid( 'o', o, false )
-    if not result then
-        print( string.format( "%s\n%s", reason, debug.traceback() ) )
-        return nil
-    end
+    if not result then return nil, reason end
     setmetatable( o, { __index = ImageData } )
-    return o
+    return o, nil
 end
 
 
@@ -625,25 +616,21 @@ local ElementData_MetaData = ClassMeta.new( {
 
 ---Create a new Element table for the SignLayout.elements
 ---@param o table Table to use initialize ElementData, must pass ElementData_MetaData:isValid( o, false )
----@return ElementData
+---@return ElementData, string ElementData, nil on success; nil, reason on error
 function ElementData.new( o )
     if __internals.DebugMode then
         local result, reason = ElementData_MetaData:isValid( 'o', o, false )
-        if not result then
-            --print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            computer.panic( reason )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     setmetatable( o, { __index = ElementData } )
-    return o
+    return o, nil
 end
 
 
 
 
 ----------------------------------------------------------------
--- The HologramData internal table
+-- The HologramData
 -- used for import string building
 
 
@@ -680,17 +667,14 @@ end
 
 ---Create a new HologramData for SignLayout.mHologramData
 ---@param o table Table to use initialize HologramData, must pass HologramData_MetaData:isValid( o, false )
----@return HologramData
+---@return HologramData, string HologramData, nil on success; nil, reason on error
 function HologramData.new( o )
     if __internals.DebugMode then
         local result, reason = HologramData_MetaData:isValid( 'o', o, false )
-        if not result then
-            print( reason ) --string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     setmetatable( o, { __index = HologramData } )
-    return o
+    return o, nil
 end
 
 local fHologram = HologramData.new( { mEnable = false } )
@@ -700,7 +684,7 @@ local tHologram = HologramData.new( { mEnable = true, mDistortionIntensity = 0.0
 
 
 ----------------------------------------------------------------
--- The RoundedData internal table
+-- The RoundedData
 -- used for import string building
 
 
@@ -729,17 +713,14 @@ end
 
 ---Create a new RoundedData for SignLayout.mRoundedDataRoundedData.new(
 ---@param o table Table to use initialize RoundedData, must pass RoundedData_MetaData:isValid( o, false )
----@return RoundedData
+---@return RoundedData, string RoundedData, nil on success; nil, reason on error
 function RoundedData.new( o )
     if __internals.DebugMode then
         local result, reason = RoundedData_MetaData:isValid( 'o', o, false )
-        if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     setmetatable( o, { __index = RoundedData } )
-    return o
+    return o, nil
 end
 
 local fRounded = RoundedData.new( { mEnable = false } )
@@ -749,7 +730,7 @@ local tRounded = RoundedData.new( { mEnable = true } )
 
 
 ----------------------------------------------------------------
--- The FlatData internal table
+-- The FlatData
 -- used for import string building
 
 
@@ -789,25 +770,21 @@ end
 
 ---Create a new FlatData for SignLayout.mFlatData
 ---@param o table Table to use initialize FlatData, must pass FlatData_MetaData:isValid( o, false )
----@return FlatData
+---@return FlatData, string FlatData, nil on success; nil, reason on error
 function FlatData.new( o )
     if __internals.DebugMode then
         local result, reason = FlatData_MetaData:isValid( 'o', o, false )
-        if not result then
-            --print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            print( reason )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     setmetatable( o, { __index = FlatData } )
-    return o
+    return o, nil
 end
 
 
 
 
 ----------------------------------------------------------------
--- The MaterialData internal table
+-- The MaterialData
 -- used for import string building
 
 
@@ -857,17 +834,14 @@ end
 
 ---Create a new MaterialData for SignLayout.mMaterialData
 ---@param o table Table to use initialize MaterialData, must pass MaterialData_MetaData:isValid( o, false )
----@return MaterialData
+---@return MaterialData, string MaterialData, nil on success; nil, reason on error
 function MaterialData.new( o )
     if __internals.DebugMode then
         local result, reason = MaterialData_MetaData:isValid( 'o', o, false )
-        if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     setmetatable( o, { __index = MaterialData } )
-    return o
+    return o, nil
 end
 
 
@@ -908,9 +882,7 @@ function SignType.new( o )
     if __internals.DebugMode then
         local result, reason = SignType_MetaData:isValid( 'o', o, false )
         if not result then
-            --print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            print( reason )
-            return nil
+            computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )
         end
     end
     setmetatable( o, { __index = SignType } )
@@ -951,8 +923,7 @@ function SignSize.new( o )
     if __internals.DebugMode then
         local result, reason = SignSize_MetaData:isValid( 'o', o, false )
         if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
+            computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )
         end
     end
     setmetatable( o, { __index = SignSize } )
@@ -1013,8 +984,7 @@ function SignClass.new( o )
     if __internals.DebugMode then
         local result, reason = SignClass_MetaData:isValid( 'o', o, false )
         if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
+            computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )
         end
     end
     setmetatable( o, { __index = SignClass } )
@@ -1074,37 +1044,42 @@ local SignLayout_MetaData = ClassMeta.new( {
 } )
 
 
+function SignLayout.isSignLayout( o )
+    if o == nil or type( o ) ~= 'table' then return false end
+    if __internals.DebugMode then
+        local result, reason = SignLayout_MetaData:isValid( 'o', o, true )
+        return result
+    end
+    -- Lazy test
+    return  o.getmetatable() ~= nil
+    and     o.getmetatable().__index == SignLayout
+end
+
 ---Create a new SignLayout table to hold the ElementData and describe the basic canvas
 ---@param o table Table to use initialize SignLayout, must pass SignLayout_MetaData:isValid( o, false )
----@return SignLayout
+---@return SignLayout, string SignLayout, nil on success; nil, reason on error
 function SignLayout.new( o )
     if __internals.DebugMode then
         local result, reason = SignLayout_MetaData:isValid( 'o', o, false )
-        if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return nil
-        end
+        if not result then return nil, reason end
     end
     o.elements = o.elements or {}
     setmetatable( o, { __index = SignLayout } )
-    return o
+    return o, nil
 end
 
 
 ---Add an Element to the Sign
 ---@param element mImageData Element to add to the sign
----@return boolean true on success, false otherwise
+---@return boolean, string true, nil on success, false, reason otherwise
 function SignLayout:addElement( element )
     if __internals.DebugMode then
         local result, reason = ElementData_MetaData:isValid( "element", element, true )
-        if not result then
-            print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            return false
-        end
+        if not result then return false, reason end
     end
     self.elements = self.elements or {}
     table.insert( self.elements, element )
-    return true
+    return true, nil
 end
 
 
@@ -1116,22 +1091,34 @@ end
 
 ---@class ElementType:table
 ---@field mElementType string Required: Import string field value
+---@field iElementType integer Required: The ElementType on the RSSSign
 ---@field bIncludeElementType boolean Optional: Include the mElementType field in the import string; default: true
 ---@field mElementName string Required: Field name in the element
 ---@field metatable ClassMeta Required: ClassMeta table describing the ElementType
 local ElementType = {
     mElementType = '',
+    iElementType = -1,
     bIncludeElementType = true,
     mElementName = nil,
     metatable = nil,
 }
 ElementType.__index = ElementType
 
+
+local function ElementType_Test_iElementType( meta, value )
+    if value < 0 or value > 2 then
+        return false, string.format( "%s must be a valid integer matching the return of sign:GetIndexType() - got %d", meta.name, value )
+    end
+    return true, nil
+end
+
+
 local ElementType_MetaData = ClassMeta.new( {
     metatablename = "ElementType",
     metatable = ElementType,
     fields = {
         ClassMeta.FieldMeta.new( { name = "mElementType", ftype = "string", valuetest = ClassMeta.FieldMeta.Common.Test_String_NotEmpty } ),
+        ClassMeta.FieldMeta.new( { name = "iElementType", ftype = "number", valuetest = ElementType_Test_iElementType } ),
         ClassMeta.FieldMeta.new( { name = "bIncludeElementType", ftype = "boolean", allownil = true } ),
         ClassMeta.FieldMeta.new( { name = "mElementName", ftype = "string", valuetest = ClassMeta.FieldMeta.Common.Test_String_NotEmpty } ),
         ClassMeta.FieldMeta.new( { name = "metatable", ftype = "table", metatable = ClassMeta, metatablename = "ClassMeta" } ),
@@ -1238,18 +1225,19 @@ end
 ---@param id integer The value as returned by sign:GetSignType() for this sign type
 ---@param hologram HologramData As appropriate for type
 local function addSignType( stype, id, hologram )
-    if stype == nil or type( stype ) ~= "string" or stype == '' then return end
-    
-    local import = "RSS_" .. stype
-    
-    local signType = SignType.new( { mSignType = import, id = id, mHologramData = hologram } )
-    if signType == nil then
-        --computer.panic( "SignType.new() returned nil\n" .. debug.traceback() )
-        computer.stop()
+    if __internals.DebugMode then
+        if stype == nil or type( stype ) ~= "string" or stype == '' then
+            computer.panic( "stype must be a valid string\n" .. debug.traceback() )
+        end
     end
     
-    RSSBuilder.Sign.Type[ stype ] = import
-    RSSBuilder.Sign.Type[ id ] = import
+    local mSignType = "RSS_" .. stype
+    
+    -- SignType will be valid or the computer will panic
+    local signType = SignType.new( { mSignType = mSignType, id = id, mHologramData = hologram } )
+    
+    RSSBuilder.Sign.Type[ stype ] = mSignType
+    RSSBuilder.Sign.Type[ id ] = mSignType
     
     __internals.SignTypes[ stype ] = signType
 end
@@ -1308,21 +1296,16 @@ local function addSignSize( signSize, resolution )
     if __internals.DebugMode then
         if signSize == nil or type( signSize ) ~= "string" or signSize == '' then
             computer.panic( string.format( 'signSize is nil or invalid type\n%s', debug.traceback() ) )
-            return
         end
         if not Vector2d.isVector2d( resolution ) then
             computer.panic( string.format( 'resolution is nil or invalid type\n%s', debug.traceback() ) )
-            return
         end
     end
     
     local mSignTypeSize = "RSS_" .. signSize
     
+    -- SignSize will be valid or the computer will panic
     local size = SignSize.new( { mSignTypeSize = mSignTypeSize, resolution = resolution } )
-    if size == nil then
-        --computer.panic( "SignSize.new() returned nil\n" .. debug.traceback() )
-        computer.stop()
-    end
     
     RSSBuilder.Sign.Size[ signSize ] = mSignTypeSize
     __internals.SignSizes[ signSize ] = size
@@ -1386,11 +1369,8 @@ local function addSignClass( classname, signSize, signType, mRoundedData, mHolog
         if classname == nil or type( classname ) ~= "string" or classname == '' then return end
     end
     
+    -- SignClass will be valid or the computer will panic
     local signClass = SignClass.new( { signSize = signSize, signType = signType, mRoundedData = mRoundedData, mHologramData = mHologramData } )
-    if signClass == nil then
-        --computer.panic( "SignClass.new() returned nil\n" .. debug.traceback() )
-        computer.stop()
-    end
     
     RSSBuilder.Sign.Class[ classname ] = classname
     __internals.SignClasses[ classname ] = signClass
@@ -1506,9 +1486,7 @@ local function addElementType( o )
     if __internals.DebugMode then
         local result, reason = ElementType_MetaData:isValid( 'o', o, false )
         if not result then
-            --print( string.format( "%s\n%s", reason, debug.traceback() ) )
-            computer.panic( reason )
-            return nil
+            computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )
         end
     end
     setmetatable( o, { __index = ElementType } )
@@ -1522,11 +1500,13 @@ end
 local function addRSSSignElementTypes()
     addElementType( {
         mElementType = "Text",
+        iElementType = 0,
         bIncludeElementType = false,
         mElementName = "mTextData",
         metatable = TextData_MetaData } )
     addElementType( {
         mElementType = "Image",
+        iElementType = 2,
         mElementName = "mImageData",
         metatable = ImageData_MetaData } )
     --TODO:  Effect
@@ -1560,7 +1540,7 @@ local function generateImportEx( layout, targetType, targetSize, mRoundedData, m
     if lastIndex < firstIndex then return false, "Missing last element!  This should never happen." end
     if lastIndex > firstIndex then
         for i = firstIndex, lastIndex do
-            if findElementByIndex( layout.elements, i ) == nil then return false, "Missing indexed element, all eIndexes in data.elements must be continuous from " .. tostring( firstIndex ) .. " to " .. tostring( lastIndex ) .. " - First missing eIndex " .. tostring( i ) end
+            if findElementByIndex( layout.elements, i ) == nil then return false, "Missing indexed element, all eIndexes in layout.elements must be continuous from " .. tostring( firstIndex ) .. " to " .. tostring( lastIndex ) .. " - First missing eIndex " .. tostring( i ) end
         end
     end
     
@@ -1587,7 +1567,7 @@ local function generateImportEx( layout, targetType, targetSize, mRoundedData, m
                 table.insert( imports, import )
             end
         else
-            computer.panic( import )
+            computer.panic( string.format( "%s\n%s", import, debug.traceback() ) )
         end
     end
     
@@ -1721,13 +1701,23 @@ end
 
 ---Apply the layout of the main elements to the sign.  Note, not all element properties can be set at runtime nor can elements be added or removed.
 ---@param sign userdata Target Sign NetworkComponent proxy
+---@param force boolean Force the application of the sign, even if the element count doesn't match.  Element types must still match, however.
 ---@return boolean, string true and nil or false and error string
-function SignLayout:apply( sign )
+function SignLayout:apply( sign, force )
     if sign == nil or type( sign ) ~= "userdata" then return false, "sign is nil or wrong type" end
     
     local classname = tostring( sign )
     local signClass = RSSBuilder.Sign.Class.GetDataByClass( classname )
     if signClass == nil then return false, "Could not resolve SignClass from '" .. classname .. "'\n\tThis is an unknown SignClass and a new internal table entry needs to be created for it." end
+    
+    -- Element count match?
+    if force == nil or type( force ) ~= "boolean" then force = false end
+    if force then
+        local sec = sign:GetNumOfElements()
+        local lec = #self.elements
+        if sec ~= lec then return false, string.format( "element count mismatch, expected %d got %d", lec, sec ) end
+    end
+    
     
     -- Don't need to sanity check these returns, they are checked when the internal tables are built, if we got a SignClass then it's valid
     local targetSize = RSSBuilder.Sign.Size.GetDataBySize( signClass.signSize )
@@ -1765,15 +1755,55 @@ function SignLayout:apply( sign )
     tryApplyChildTable( self, "mFlatData", FlatData_MetaData )
     tryApplyChildTable( self, "mMaterialData", MaterialData_MetaData )
     
-    
+    local sec = sign:GetNumOfElements()
     for _, element in pairs( self.elements ) do
-        local et = __internals.ElementTypes[ element.mElementType ]
-        tryApplyChildTable( element, "mSharedData", SharedData_MetaData, scale, element.eIndex, sign )
-        tryApplyChildTable( element, et.mElementName, et.metatable, scale, element.eIndex, sign )
+        local eIndex = element.eIndex
+        if eIndex < sec then -- Have to test this lest we CTD
+            local et = __internals.ElementTypes[ element.mElementType ]
+            if et.iElementType == sign:GetIndexType( eIndex ) then -- Always a requirement
+                tryApplyChildTable( element, "mSharedData", SharedData_MetaData, scale, element.eIndex, sign )
+                tryApplyChildTable( element, et.mElementName, et.metatable, scale, element.eIndex, sign )
+            end
+        end
     end
     
     
     return true, nil
+end
+
+
+
+
+---Check whether the number of elements in the sign matches the layout as well as each elements type; unfortunately there are not the required getters (and setters!) to interrogate any further.
+---@param sign userdata Target Sign NetworkComponent proxy
+---@return boolean, string true and nil if the layout matches (as best we can) the sign or false and the first mismatch otherwise
+function SignLayout:signMatches( sign )
+    if sign == nil or type( sign ) ~= "userdata" then return false, "sign is nil or wrong type" end
+    
+    local classname = tostring( sign )
+    local signClass = RSSBuilder.Sign.Class.GetDataByClass( classname )
+    if signClass == nil then return false, "Could not resolve SignClass from '" .. classname .. "'\n\tThis is an unknown SignClass and a new internal table entry needs to be created for it." end
+    
+    local sec = sign:GetNumOfElements()
+    local lec = #self.elements
+    if sec ~= lec then return false, string.format( "element count mismatch, expected %d got %d", lec, sec ) end
+    
+    local result = true
+    local reason = ''
+    for _, element in pairs( self.elements ) do
+        local eIndex = element.eIndex
+        local et = __internals.ElementTypes[ element.mElementType ]
+        
+        local seValue = sign:GetIndexType( eIndex )
+        if seValue ~= et.iElementType then
+            result = false
+            if reason ~= '' then reason = reason .. '\n' end
+            reason = reason .. string.format( "iElementType mismatch for eIndex %d '%s', expected %d got %d", eIndex, element.mSharedData.mElementName, et.iElementType, seValue )
+        end
+        
+    end
+    
+    return result, reason
 end
 
 

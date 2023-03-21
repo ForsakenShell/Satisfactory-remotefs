@@ -5,6 +5,7 @@ local Vector4F = _G[ "Vector4F" ] or {
     Y = 0.0,
     Z = 0.0,
     W = 0.0,
+    pattern = '{X=%1.6f,Y=%1.6f,Z=%1.6f,W=%1.6f}',
 }
 _G[ "Vector4F" ] = Vector4F
 Vector4F.__index = Vector4F
@@ -58,6 +59,39 @@ function Vector4F.equals( a, b )
     -- Don't test for table equality, at best is saves one comparison, worst (and most likely) it adds one
     return ( a.X == b.X )and( a.Y == b.Y )and( a.Z == b.Z )and( a.W == b.W )
 end
+
+
+
+
+---Return this Vector4F as a string using the supplied pattern or default Vector4F.pattern
+---@param pattern? string Optional pattern to use for string.format()
+---@return string formatted string
+function Vector4F:ToString( pattern )
+    pattern = pattern or self.pattern
+    return string.format( pattern, self.X, self.Y, self.Z, self.W )
+end
+
+---Return the Vector4F? as a string using the supplied pattern or default Vector4F.pattern
+---@param v table vector
+---@param pattern? string Optional pattern to use for string.format()
+---@return string formatted string
+function Vector4F.ToString( v, pattern )
+    if v == nil then return 'nil' end
+    local vt = type( v )
+    if vt ~= "table" and vt ~= "userdata" then return 'invalid' end
+    local x = v.x or v.X or v[ 1 ]
+    local y = v.y or v.Y or v[ 2 ]
+    local z = v.z or v.Z or v[ 3 ]
+    local w = v.w or v.W or v[ 4 ]
+    if x == nil or type( x ) ~= "number"
+    or y == nil or type( y ) ~= "number"
+    or z == nil or type( z ) ~= "number"
+    or w == nil or type( w ) ~= "number"
+    then return 'invalid' end
+    pattern = pattern or Vector4F.pattern
+    return string.format( pattern, x, y, z, w )
+end
+
 
 
 

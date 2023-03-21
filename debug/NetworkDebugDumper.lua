@@ -53,8 +53,9 @@ local additionalObjects = {}
 for _, object in pairs( exportObjects ) do
     
     local name = string.lower( object.internalName )
-    if string.find( name, "trainstation", 1, true ) ~= '' then
-        print( name )
+    local foo, bar = string.find( name, "trainstation", 1, true )
+    if foo ~= nil and foo > 0 then
+        print( "train station: " .. name )
         local platforms = getPlatforms( object )
         if platforms ~= nil and #platforms > 1 then
             for i = 2, #platforms do
@@ -197,18 +198,13 @@ local function dumpParameters( f, indents, isSignal )
         local fullDump = {}
         local parametersDesc = {}
         local returnsDesc = {}
-        local hasReturn = false
         local lparam = #parameters
         if isSignal then -- Signals don't have parameters, only returns
-            hasReturn = isSignal
             lparam = 0
-        else
-            hasReturn = ( f[ "flags" ] & 16 ) ~= 0
-            if hasReturn then lparam = lparam - 1 end
         end
         for index, parameter in pairs( parameters ) do
         --    dumpReflectionBase( parameter, indents, _ )
-            local isReturnValue =( ( parameter.flags & 16 ) ~= 0 ) or ( index >= lparam )
+            local isReturnValue = ( ( parameter.flags & 16 ) ~= 0 ) or ( index > lparam )
             local ps = parameter.name
             local psl = ps .. ': ' .. dataTypeName( parameter.dataType, parameter )
             if parameter.description ~= '' then

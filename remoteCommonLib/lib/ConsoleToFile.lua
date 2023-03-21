@@ -11,7 +11,7 @@ end
 local __oldPrint = print
 print = function( ... )
     if ____ConsoleRedirected then
-        --[[
+        
         local d = { ... }
         local s = ''
         for _, v in pairs( d ) do
@@ -34,9 +34,9 @@ print = function( ... )
         end
         s = s .. '\n'
         ____ConsoleHandle:write( s )
-        ]]
-        ____ConsoleHandle:write( ... )
-        ____ConsoleHandle:write( '\n' )
+        
+        --____ConsoleHandle:write( ... )
+        --____ConsoleHandle:write( '\n' )
     else
         __oldPrint( ... )
     end

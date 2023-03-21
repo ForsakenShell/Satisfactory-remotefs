@@ -46,7 +46,7 @@ ____RemoteCommonLib = "/remoteCommonLib"                                --- Used
 
 
 
-print( "\n\nSystem EEPROM v1.1.3...\n\n" )
+print( "\n\nSystem EEPROM v1.1.3a...\n\n" )
 
 
 
@@ -62,8 +62,8 @@ end
 ---Reads the table of settings stored in a machines nickname.  This function does not apply the setings, this merely reads the string and turns it into a {key, value} table.
 ---Settings should be encoded as: key1="value1" key2="value2" ...
 ---@param proxy userdata NetworkComponent proxy
----@param lowKeys boolean Force the keys to be lowercase, otherwise any cAmElCaSInG is preserved and it will be usercode responsibility to deal with it
----@return table: {key=field,value=value*} *value will not be quoted despite the requirement to enclose the value in double quotes in the nick
+---@param lowerKeys boolean Force the keys to be lowercase, otherwise any cAmElCaSInG is preserved and it will be usercode responsibility to deal with it
+---@return table table {key=field,value=value*} *value will not be quoted despite the requirement to enclose the value in double quotes in the nick
 function readNetworkComponentSettings( proxy, lowerKeys )
     lowerKeys = lowerKeys or false
     local results = {}
@@ -95,7 +95,7 @@ end
 
 ---Reads the table of settings stored in the computers nickname, does not apply the setings
 ---Settings should be encoded as: key1="value1" key2="value2" ...
----@return table: {key=field,value=value*} *value will not be quoted despite it's requirement to enclose the value in the nick
+---@return table table {key=field,value=value*} *value will not be quoted despite it's requirement to enclose the value in the nick
 function readComputerSettings( lowerKeys )
     return readNetworkComponentSettings( computer.getInstance(), lowerKeys )
 end
@@ -321,7 +321,7 @@ end
 
 
 ---Downloads the latest EEPROM.lua and flashes the chip; does not reboot the computer
----@return boolean, string?: success/failre and, the remote URL or nil if no network card
+---@return boolean, string success/failure and, the remote URL or nil if no network card
 function updateEEPROM()
     -- No internet card means no updates
     if ____InternetCard == nil then
