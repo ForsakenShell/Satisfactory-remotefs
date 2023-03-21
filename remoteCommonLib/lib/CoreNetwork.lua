@@ -111,7 +111,7 @@ end
 ---@param packet string encoded packet to rebuild the id and payload from
 ---@return integer, table
 ---@return integer packet_id or nil on error
----@return table payload or nil on error
+---@return table payload; may be nil if the packet was created with no payload however, it will always be nil on error
 function CoreNetwork.decodePacket( packet )
     local packet_id = -1
     local payload = nil
@@ -127,11 +127,9 @@ function CoreNetwork.decodePacket( packet )
     end
     packet_id = math.tointeger( pid )
     local jdata = pdata[ CoreNetwork.__PacketPayload ]
-    if jdata == nil or type( jdata ) ~= "string" then
-        print( string.format( "Bad packet - no '%s' : '%s'\n%s", CoreNetwork.__PacketPayload, packet, debug.traceback() ) )
-        return nil, nil
+    if jdata ~= nil and type( jdata ) == "string" then -- if not nil, then should always be a string (json serialized)
+        payload = CoreNetwork.__json.decode( jdata )
     end
-    payload = CoreNetwork.__json.decode( jdata )
     return packet_id, payload                  -- Return the PacketID and payload
 end
 
