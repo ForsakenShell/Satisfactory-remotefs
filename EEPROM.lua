@@ -46,7 +46,7 @@ ____RemoteCommonLib = "/remoteCommonLib"                                --- Used
 
 
 
-print( "\n\nSystem EEPROM v1.1.3a...\n\n" )
+print( "\n\nSystem EEPROM v1.1.4...\n\n" )
 
 
 
@@ -206,13 +206,30 @@ print( "BootLoader     : " .. ____BootLoader .. "\n\n" )
 ____RequiredFiles = {}
 
 
-function require( file, remotefs )
+---Fetch a text file from a remote host, optionally panic the computer if the file cannot be retrieved
+---@param remote string Full URL to the file
+---@param panicOnFail boolean computer.panic() if the file cannot be retrieved; otherwise return nil
+local function remoteFetchFile( remote, panicOnFail )
+    local request = ____InternetCard:request( remote, "GET", "" )
+    local result, data = request:await()
+    if panicOnFail
+    and( ( result == nil )or( result < 200 or result > 299 ) )then  -- Magic numbers are bad, 2xx is the request successful response range
+        computer.panic( "Could not fetch file from: " .. remote .. "\n" .. debug.traceback() )
+    end
+    return data
+end
+
+
+---Load the given module.  This implementation looks as the local disk mounted as root and/or the remote filesystem specified by the computer settings or the explicit remote filesystem passed as the second parameter to require()
+---@param modname string filepath to load and compile; filepath should be relative to the (remote) filesystem root
+---@param remotefs string Optional remote filesystem to fetch the file from
+function require( modname, remotefs )
     -- Make sure we are properly slashed to start
-    file = ____filesystem.path( 1, file )
+    modname = ____filesystem.path( 1, modname )
     
     
     -- Check the localized file in the table
-    local package = ____RequiredFiles[ file ]
+    local package = ____RequiredFiles[ modname ]
     if package ~= nil then
         -- Already required
         return package
@@ -220,24 +237,24 @@ function require( file, remotefs )
     
     
     -- As we may manipulate the local filename, grab a copy for remote filename manipulation
-    local remote = file
+    local remote = modname
     
     -- Assume the computer specific remote filesystem if not specified
     remotefs = ____filesystem.path( 1, remotefs or ____RemoteFS )
     
     -- Prefix the local filename with the RemoteCommonLib fs path to prevent local file conflicts
     if remotefs == ____RemoteCommonLib then
-        file = ____RemoteCommonLib .. file
+        modname = ____RemoteCommonLib .. modname
     end
     
     
     -- Try the local disk first, if we can't find it then we'll look for it remotely
     if not ____AlwaysFetchFromRemote
     and ____Disk_UUID ~= ''
-    and ____filesystem.exists( file ) then
+    and ____filesystem.exists( modname ) then
         -- Create a new file package
-        package = ____filesystem.loadFile( file )() -- The compiled lua file loaded into memory
-        ____RequiredFiles[ file ] = package         -- Remember this file package
+        package = ____filesystem.loadFile( modname )() -- The compiled lua file loaded into memory
+        ____RequiredFiles[ modname ] = package         -- Remember this file package
     end
     
     
@@ -249,70 +266,68 @@ function require( file, remotefs )
         
         
         -- Fetch the file
-        local request = ____InternetCard:request( remote, "GET", "" )
-        local result, data = request:await()
-        if not ____AlwaysFetchFromRemote            -- If we use a local disk copy first, then we must panic on the remote fetch fail
-        and result < 200 or result > 299 then       -- Magic numbers are bad, 2xx is the request successful response range
-            computer.panic( "Could not fetch file from: " .. remote .. "\n" .. debug.traceback() )
-        end
+        local data = remoteFetchFile( remote, ____AlwaysFetchFromRemote )
         
-        
-        -- load() or loadFile() based on computer settings and hardware
-        if ____UseLoadFile then
+        if data ~= nil then
             
-            -- Build the path on the [RAM] disk
-            local function buildPath( filepath )
-                local pattern = '([^/]+)'
-                local results = {}
-                local _ = string.gsub( filepath, pattern,
-                    function( c )
-                        results[ #results + 1 ] = c
-                        --print( c )
-                    end )
-                --Build the path from the start of results to #results - 1 (the last index should be the filename)
-                local path = ''
-                for i=1, #results - 1 do
-                    path = path .. '/' .. results[ i ]
-                    if  not ____filesystem.exists( path )
-                    and not ____filesystem.createDir( path ) then
-                        computer.panic( "Unable to create " .. path .. "\n" .. debug.traceback() )
+            -- load() or loadFile() based on computer settings and hardware
+            if ____UseLoadFile then
+                
+                -- Build the path on the [RAM] disk
+                local function buildPath( filepath )
+                    local pattern = '([^/]+)'
+                    local results = {}
+                    local _ = string.gsub( filepath, pattern,
+                        function( c )
+                            results[ #results + 1 ] = c
+                            --print( c )
+                        end )
+                    --Build the path from the start of results to #results - 1 (the last index should be the filename)
+                    local path = ''
+                    for i=1, #results - 1 do
+                        path = path .. '/' .. results[ i ]
+                        if  not ____filesystem.exists( path )
+                        and not ____filesystem.createDir( path ) then
+                            computer.panic( "Unable to create " .. path .. "\n" .. debug.traceback() )
+                        end
                     end
+                    return path, results[ #results ]
                 end
-                return path, results[ #results ]
+                local path, name = buildPath( modname )
+                
+                
+                -- Write it to the [RAM] disk
+                local handle = ____filesystem.open( modname, "w" )
+                if handle == nil then
+                    computer.panic( "Unable to create file " .. modname .. "\n" .. debug.traceback() )
+                end
+                handle:write( data )
+                handle:close()
+                
+            else
+                
+                -- No disk at all or no storing remote files, load it directly from the returned buffer
+                package = load( data, modname )()                  -- The compiled lua file loaded into memory
+                ____RequiredFiles[ modname ] = package             -- Remember this file package
+                
+                -- Return the package
+                return package
             end
-            local path, name = buildPath( file )
             
-            
-            -- Write it to the [RAM] disk
-            local handle = ____filesystem.open( file, "w" )
-            if handle == nil then
-                computer.panic( "Unable to create file " .. file .. "\n" .. debug.traceback() )
-            end
-            handle:write( data )
-            handle:close()
-            
-        else
-            
-            -- No disk at all or no storing remote files, load it directly from the returned buffer
-            package = load( data, file )()                  -- The compiled lua file loaded into memory
-            ____RequiredFiles[ file ] = package             -- Remember this file package
-            
-            -- Return the package
-            return package
         end
     end
     
     
     -- Try to find it on the [RAM] disk [again]
-    if not ____filesystem.exists( file ) then
+    if not ____filesystem.exists( modname ) then
         -- Last chance to panic so do it!
-        computer.panic( "Cannot find file " .. file .. "\n" .. debug.traceback()  )
+        computer.panic( "Cannot find file " .. modname .. "\n" .. debug.traceback()  )
     end
     
     
     -- Create a new file package
-    package = ____filesystem.loadFile( file )()     -- The compiled lua file loaded into memory
-    ____RequiredFiles[ file ] = package             -- Remember this file package
+    package = ____filesystem.loadFile( modname )()     -- The compiled lua file loaded into memory
+    ____RequiredFiles[ modname ] = package             -- Remember this file package
     
     
     -- Return the package
@@ -333,9 +348,8 @@ function updateEEPROM()
     local request = ____InternetCard:request( remote, "GET", "" )
     
     -- Fetch it
-    local result, data = request:await()
-    if result < 200 or result > 299 then    -- Magic numbers are bad, 2xx is the request successful response range
-        --computer.panic( "Could not fetch file from: " .. remote )
+    local data = remoteFetchFile( remote, false )
+    if data == nil then
         return false, remote -- Let the caller handle this
     end
     
