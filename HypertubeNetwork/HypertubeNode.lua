@@ -321,18 +321,29 @@ local function isNetworkMapValid()
     if nodes == nil or nCount == 0 or nCount < HypertubeNode.vertex then -- Incomplete network
         return false, "nodes == nil"
     end
+    local result = true
+    local noidents = ''
     for _, node in pairs( nodes ) do
         local success, reason = isNodeValid( node )
-        if not success then
+        if not success then                     -- Internal software error, bad node data
             return false, reason
         end
         for _, remote in pairs( node.connections ) do
             local r = nodes[ remote ]
-            success, reason = isNodeValid( r )
-            if not success then
-                return false, reason
+            if r ~= nil then
+                success, reason = isNodeValid( r )
+                if not success then             -- Internal software error, bad node data
+                    return false, reason
+                end
+            else                                -- Network timeout
+                result = false
+                if noidents ~= '' then noidents = noidents .. ', ' end
+                noidents = noidents .. tostring( remote )
             end
         end
+    end
+    if not result then
+        return false, "Waiting for IDENT from: " .. noidents
     end
     return true, nil                            -- No dangling pointers or incomplete network
 end
@@ -1173,7 +1184,6 @@ local function refreshRSSSignsFromLayout( clearStatus )
     end
     
     local networkValid, reason = isNetworkMapValid()
-    --print( networkValid, reason )
     
     if networkValid then
         if not mapGenerated then
@@ -1184,6 +1194,8 @@ local function refreshRSSSignsFromLayout( clearStatus )
                 newLayoutState = LAYOUT_MAP
             end
         end
+    else
+        print( reason )
     end
     
     if lastLayoutState ~= newLayoutState then
@@ -1217,7 +1229,6 @@ function HypertubeNode.updateMapToggleMode( showMap )
     local uioState = showMap
     
     local networkValid, reason = isNetworkMapValid()
-    --print( networkValid, reason )
     
     if not signMapValid then
         refreshRSSSignsFromLayout( true )
@@ -1244,6 +1255,7 @@ function HypertubeNode.updateMapToggleMode( showMap )
         showMap = false
         uioState = false
     elseif not networkValid then
+        print( reason )
         t = 'Waiting for network'
         showMap = false
         uioState = false
