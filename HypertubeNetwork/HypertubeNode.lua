@@ -5,6 +5,8 @@
 --- Based on work by Willis
 ---
 
+--- TODO:  Move parts of this into their own source file, ie: UIO, RSSBuilder, etc
+
 local UPDATED = "14/03/2023 1:40 am"
 print( "\nInitialising HypertubeNode\n\nLast Update: " .. UPDATED .. "\n" )
 
@@ -322,7 +324,7 @@ local function isNetworkMapValid()
         return false, "nodes == nil"
     end
     local result = true
-    local noidents = ''
+    local timedout = {}
     for _, node in pairs( nodes ) do
         local success, reason = isNodeValid( node )
         if not success then                     -- Internal software error, bad node data
@@ -337,13 +339,24 @@ local function isNetworkMapValid()
                 end
             else                                -- Network timeout
                 result = false
-                if noidents ~= '' then noidents = noidents .. ', ' end
-                noidents = noidents .. tostring( remote )
+                if not table.hasValue( timedout, remote ) then
+                    table.insert( timedout, remote )
+                end
             end
         end
     end
     if not result then
-        return false, "Waiting for IDENT from: " .. noidents
+        local s = ''
+        if table.countKeyValuePairs( timedout ) > 0 then
+            table.sort( timedout )
+            for k, v in pairs( timedout ) do
+                if s ~= '' then s = s .. ', ' end
+                s = s .. tostring( v )
+            end
+        else
+            s = 'Unknown?'
+        end
+        return false, "Waiting for IDENT from: " .. s
     end
     return true, nil                            -- No dangling pointers or incomplete network
 end
@@ -511,7 +524,7 @@ local function generateBaseRSSSignLayout()
     if not addRSSImageElementToLayout( layout, RSS_EID_MAP_TOGGLE    , "icnMapToggle", RSS_EZINDEX_UIO    , mPosition, mTexture, Color.CYAN_SIGN_LOW, mOverwriteImageSize ) then return nil end
     local mPadding = Vector4F.new( 10.000000, 5.000000, 10.000000, 5.000000 )
     mPosition = Vector2f.new( 488.000000, 57.000000 )
-    if not addRSSTextElementToLayout ( layout, RSS_EID_MAP_TOGGLE + 1, "txtMapToggle", RSS_EZINDEX_UIO + 1, mPosition, "Display Map", 12, RSSBuilder.Text.Justification.Right, nil, mPadding ) then return nil end
+    if not addRSSTextElementToLayout ( layout, RSS_EID_MAP_TOGGLE + 1, "txtMapToggle", RSS_EZINDEX_UIO + 1, mPosition, "Waiting for network", 12, RSSBuilder.Text.Justification.Right, nil, mPadding ) then return nil end
     
     -- UIO - Select Up
     mPosition = Vector2f.new( 496.000000, 81.000000 )
@@ -1429,9 +1442,8 @@ local function triggerListOptScrollDn( edata )
         start = 1
     elseif selected < last then
         selected = selected + 1
-        local loLimit = RSS_EID_LIST_LAST - RSS_EID_LIST_FIRST + 1
-        if selected > start + loLimit then
-            start = selected - loLimit
+        if selected > start + RSS_LIST_COUNT then
+            start = selected - RSS_LIST_COUNT
         end
     end
     
