@@ -58,10 +58,10 @@ function FieldMeta:isValid( value, checkMeta )
         if self.metatablename == nil or type( self.metatablename ) ~= "string" or self.metatablename == '' then return false, string.format( "FieldMeta.metatablename is missing or invalid\n%s", debug.traceback() ) end
         local mt = getmetatable( value )
         if ( mt ~= nil and mt.__index ~= self.metatable ) and value.__index ~= self.metatable then
-            print( '?' , tostring( self.metatable ) )
-            print( '>', tostring( mt ) )
-            if mt ~= nil then print( '>\t' .. tostring( mt.__index ) ) end
-            print( '}', tostring( value.__index ) )
+            --print( '?' , tostring( self.metatable ) )
+            --print( '>', tostring( mt ) )
+            --if mt ~= nil then print( '>\t' .. tostring( mt.__index ) ) end
+            --print( '}', tostring( value.__index ) )
             return false, string.format( "%s metatable incorrect, expected %s\n%s", self.name, self.metatablename, debug.traceback() )
         end
     end
