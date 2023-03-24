@@ -46,7 +46,7 @@ ____RemoteCommonLib = "/remoteCommonLib"                                --- Used
 
 
 
-print( "\n\nSystem EEPROM v1.1.4...\n\n" )
+print( "\n\nSystem EEPROM v1.1.5...\n\n" )
 
 
 
@@ -59,16 +59,14 @@ end
 
 
 
----Reads the table of settings stored in a machines nickname.  This function does not apply the setings, this merely reads the string and turns it into a {key, value} table.
+---Decodes a table of settings stored in a string.
 ---Settings should be encoded as: key1="value1" key2="value2" ...
----@param proxy userdata NetworkComponent proxy
+---@param str string Tokenized string to decode
 ---@param lowerKeys boolean Force the keys to be lowercase, otherwise any cAmElCaSInG is preserved and it will be usercode responsibility to deal with it
 ---@return table table {key=field,value=value*} *value will not be quoted despite the requirement to enclose the value in double quotes in the nick
-function readNetworkComponentSettings( proxy, lowerKeys )
+function settingsFromString( str, lowerKeys )
     lowerKeys = lowerKeys or false
     local results = {}
-    if proxy == nil then return results end
-    local str = proxy[ "nick" ]
     if str == nil or type( str ) ~= "string" then return results end
     for key, value in string.gmatch( str, '(%w+)=(%b"")' ) do
         if lowerKeys then key = string.lower( key ) end
@@ -78,18 +76,41 @@ function readNetworkComponentSettings( proxy, lowerKeys )
 end
 
 
+---Encodes a table of settings into a string.
+---Settings will be encoded as: key1="value1" key2="value2" ...
+---@param settings table Table to tokenize into a string
+---@param lowerKeys boolean Force the keys to be lowercase, otherwise any cAmElCaSInG is preserved and it will be usercode responsibility to deal with it
+---@return string
+function stringFromSettings( settings )
+    if settings == nil or type( settings ) ~= "table" then return nil end
+    local str = ''
+    for k, v in pairs( settings ) do
+        if str ~= '' then str = str .. ' ' end
+        str = str .. k .. '="' .. v .. '"'
+    end
+    return str
+end
+
+
+---Reads the table of settings stored in a machines nickname.  This function does not apply the setings, this merely reads the string and turns it into a {key, value} table.
+---Settings should be encoded as: key1="value1" key2="value2" ...
+---@param proxy userdata NetworkComponent proxy
+---@param lowerKeys boolean Force the keys to be lowercase, otherwise any cAmElCaSInG is preserved and it will be usercode responsibility to deal with it
+---@return table table {key=field,value=value*} *value will not be quoted despite the requirement to enclose the value in double quotes in the nick
+function readNetworkComponentSettings( proxy, lowerKeys )
+    if proxy == nil then return nil end
+    return settingsFromString( proxy.nick, lowerKeys )
+end
+
+
 ---Writes a table of settings to the machines nickname.
 ---@param proxy userdata The machine proxy to write settings to
 ---@param settings table Settings to be written to the machines nickname
 function writeNetworkComponentSettings( proxy, settings )
     if proxy == nil then return end
-    if settings == nil or type( settings ) ~= "table" then return end
-    local nick = ''
-    for k, v in pairs( settings ) do
-        if nick ~= '' then nick = nick .. ' ' end
-        nick = nick .. k .. '="' .. v .. '"'
-    end
-    proxy[ "nick" ] = nick
+    local str = stringFromSettings( settings )
+    if str == nil then return end
+    proxy[ "nick" ] = str
 end
 
 
@@ -166,6 +187,7 @@ if ____Disk_UUID == '' then
     print( "WARNING        : No local disk installed" )
 else
     print( "Disk           : " .. ____Disk_UUID )
+    print( 'Windows path   : "%LocalAppData%\\FactoryGame\\Saved\\SaveGames\\computers\\' .. ____Disk_UUID .. '"' )
     if not ____filesystem.mount( "/dev/" .. ____Disk_UUID, '/' ) then
         computer.panic( "Could not mount disk to root" )
     end
