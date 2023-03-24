@@ -29,7 +29,7 @@ HypertubeNode.init()
 while true do
     HypertubeNode.UIO.update()
     
-    local edata = { event.pull( 1.0 ) }
+    local edata = { event.pull() }
     
     HypertubeNode.handleEvent( edata )
     
