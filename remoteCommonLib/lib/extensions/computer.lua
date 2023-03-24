@@ -12,7 +12,7 @@ function computer.getPCIDevicesByClass( class )
     
     if type( class ) == "table" then
         for _, c in pairs( class ) do
-            table.imerge( results, computer.getPCIDevicesByClass( c ) )
+            table.merge( results, computer.getPCIDevicesByClass( c ) )
         end
         
     elseif type( class ) == "string" then

@@ -13,14 +13,17 @@ function component.getComponentsByClass( class )
     if type( class ) == "table" then
         for _, c in pairs( class ) do
             --print( c )
-            table.imerge( results, component.getComponentsByClass( c ) )
+            table.merge( results, component.getComponentsByClass( c ) )
         end
         
     elseif type( class ) == "string" then
         --print( class )
         local comps = component.findComponent( findClass( class ) )
         for _, c in pairs( comps ) do
-            table.insert( results, component.proxy( c ) )
+            local proxy = component.proxy( c )
+            if not table.hasValue( results, proxy ) then
+                table.insert( results, proxy )
+            end
         end
     end
     
