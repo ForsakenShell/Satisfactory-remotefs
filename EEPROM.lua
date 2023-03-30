@@ -45,8 +45,9 @@ ____RemoteCommonLib = "/remoteCommonLib"                                --- Used
 
 
 
-
-print( "\n\nSystem EEPROM v1.1.5...\n\n" )
+____EEPROM_VERSION_FULL = { 1, 2, 0, 'a' }
+____EEPROM_VERSION = string.format( 'v%d.%d.%d%s', ____EEPROM_VERSION_FULL[ 1 ], ____EEPROM_VERSION_FULL[ 2 ], ____EEPROM_VERSION_FULL[ 3 ], ____EEPROM_VERSION_FULL[ 4 ] )
+print( "\n\nSystem EEPROM " .. ____EEPROM_VERSION .. "...\n\n" )
 
 
 
@@ -202,16 +203,16 @@ else
         
     elseif ____UseTempFileSytem then
         if not ____filesystem.makeFileSystem( "tmpfs", "tmp" ) then
-            computer.panic( "could not create temporary file system to host remote files\n" .. debug.traceback() )
+            computer.panic( "Could not create temporary file system to host remote files" )
         end
         if not ____filesystem.mount( "/dev/tmp", '/' ) then
-            computer.panic( "Could not mount RAM disk as root\n" .. debug.traceback() )
+            computer.panic( "Could not mount RAM disk as root" )
         end
     end
 end
 
 if ____Disk_UUID == '' and ( ____InternetCard == nil or ____RemoteFS == '' ) then
-    computer.panic( "No disk and no InternetCard (or remote file system) means no file system\n" .. debug.traceback() )
+    computer.panic( "No disk and no InternetCard (or remote file system) means no file system" )
 end
 
 
@@ -231,21 +232,27 @@ ____RequiredFiles = {}
 ---Fetch a text file from a remote host, optionally panic the computer if the file cannot be retrieved
 ---@param remote string Full URL to the file
 ---@param panicOnFail boolean computer.panic() if the file cannot be retrieved; otherwise return nil
-local function remoteFetchFile( remote, panicOnFail )
+---@param debugTraceLevel? integer debug.traceback level, default is 2
+local function remoteFetchFile( remote, panicOnFail, debugTraceLevel )
     local request = ____InternetCard:request( remote, "GET", "" )
     local result, data = request:await()
     if panicOnFail
     and( ( result == nil )or( result < 200 or result > 299 ) )then  -- Magic numbers are bad, 2xx is the request successful response range
-        computer.panic( "Could not fetch file from: " .. remote .. "\n" .. debug.traceback() )
+        debugTraceLevel = debugTraceLevel or 2
+        if debugTraceLevel < 2 then debugTraceLevel = 2 end
+        computer.panic( debug.traceback( "Could not fetch file from: " .. remote, debugTraceLevel ) )
     end
     return data
 end
 
 
----Load the given module.  This implementation looks as the local disk mounted as root and/or the remote filesystem specified by the computer settings or the explicit remote filesystem passed as the second parameter to require()
+---Load the given module.  This implementation looks at the local disk mounted as root and/or the remote filesystem specified by the computer settings or the explicit remote filesystem passed as the remotefs parameter.
 ---@param modname string filepath to load and compile; filepath should be relative to the (remote) filesystem root
 ---@param remotefs string Optional remote filesystem to fetch the file from
-function require( modname, remotefs )
+---@param panicOnFailure boolean Optional panic the computer on any error (default: true) or return nil (false)
+function require( modname, remotefs, panicOnFailure )
+    if panicOnFailure == nil or type( panicOnFailure ) ~= "boolean" then panicOnFailure = true end
+    
     -- Make sure we are properly slashed to start
     modname = ____filesystem.path( 1, modname )
     
@@ -288,7 +295,12 @@ function require( modname, remotefs )
         
         
         -- Fetch the file
-        local data = remoteFetchFile( remote, ____AlwaysFetchFromRemote )
+        local data = remoteFetchFile( remote, ____AlwaysFetchFromRemote and panicOnFailure, 3 )
+        
+        -- Always fetch but don't panic, return nil
+        if data == nil and ____AlwaysFetchFromRemote and not panicOnFailure then
+            return nil
+        end
         
         if data ~= nil then
             
@@ -310,7 +322,11 @@ function require( modname, remotefs )
                         path = path .. '/' .. results[ i ]
                         if  not ____filesystem.exists( path )
                         and not ____filesystem.createDir( path ) then
-                            computer.panic( "Unable to create " .. path .. "\n" .. debug.traceback() )
+                            if panicOnFailure then
+                                computer.panic( debug.traceback( "Unable to create " .. path, 2 ) )
+                            else
+                                return nil
+                            end
                         end
                     end
                     return path, results[ #results ]
@@ -321,7 +337,11 @@ function require( modname, remotefs )
                 -- Write it to the [RAM] disk
                 local handle = ____filesystem.open( modname, "w" )
                 if handle == nil then
-                    computer.panic( "Unable to create file " .. modname .. "\n" .. debug.traceback() )
+                    if panicOnFailure then
+                        computer.panic( debug.traceback( "Unable to create file " .. modname, 2 ) )
+                    else
+                        return nil
+                    end
                 end
                 handle:write( data )
                 handle:close()
@@ -343,7 +363,11 @@ function require( modname, remotefs )
     -- Try to find it on the [RAM] disk [again]
     if not ____filesystem.exists( modname ) then
         -- Last chance to panic so do it!
-        computer.panic( "Cannot find file " .. modname .. "\n" .. debug.traceback()  )
+        if panicOnFailure then
+            computer.panic( debug.traceback( "Cannot find file " .. modname, 2 ) )
+        else
+            return nil
+        end
     end
     
     
@@ -357,12 +381,20 @@ function require( modname, remotefs )
 end
 
 
+
 ---Downloads the latest EEPROM.lua and flashes the chip; does not reboot the computer
+---@param panicOnFail? boolean Panic the computer on failure, default: false
 ---@return boolean, string success/failure and, the remote URL or nil if no network card
-function updateEEPROM()
+function updateEEPROM( panicOnFail )
+    panicOnFail = panicOnFail or false
+    
     -- No internet card means no updates
     if ____InternetCard == nil then
-        return false, nil
+        if panicOnFail then
+            computer.panic( debug.traceback( "No InternetCard installed in computer", 2 ) )
+        else
+            return false, nil
+        end
     end
     
     -- Build the remote URL for the EEPROM
@@ -370,7 +402,7 @@ function updateEEPROM()
     local request = ____InternetCard:request( remote, "GET", "" )
     
     -- Fetch it
-    local data = remoteFetchFile( remote, false )
+    local data = remoteFetchFile( remote, panicOnFail, 3 )
     if data == nil then
         return false, remote -- Let the caller handle this
     end
