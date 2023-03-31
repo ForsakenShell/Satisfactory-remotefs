@@ -54,6 +54,20 @@ local function buildSet( classes )
         set[ class ] = class
     end
     set.All = generateAllFromClasses( set )
+    set.isInSet = function( this, class )
+        if this[ "All" ] == nil then return false end
+        local ctype = findClass( class )
+        if ctype == nil then return false end
+        for _, setClass in pairs( this.All ) do
+            if type( setClass ) == "string" then
+                local sctype = findClass( setClass )
+                if sctype == ctype then
+                    return true
+                end
+            end
+        end
+        return false
+    end
     return set
 end
 
@@ -69,9 +83,36 @@ ClassGroup.CircuitSwitches = buildSet(
 
 
 
+ClassGroup.ProductionMachines = buildSet(
+    {
+        "Manufacturer",                         -- Smelter, Constructor, Refinery, etc
+        "FGBuildableResourceExtractorBase",     -- Miner, Water Pump, Oil Extractor, etc
+    }
+)
+
+
+--TODO:  Fill this with the proper buildable classes
 ClassGroup.CodeableSplitters = buildSet(
     {
         "CodeableSplitter",
+    }
+)
+
+
+--TODO:  Fill this with the proper buildable classes
+ClassGroup.CodeableMergers = buildSet(
+    {
+        "CodeableMerger",
+    }
+)
+
+
+
+
+--TODO:  Fill this with the proper buildable classes
+ClassGroup.TrainStations = buildSet(
+    {
+        "RailroadStation",
     }
 )
 
@@ -174,6 +215,7 @@ ClassGroup.Displays.Signs.ReallySimpleSigns = buildSet(
 
 ClassGroup.Displays.Signs.WidgetSigns = buildSet(
     {
+        "WidgetSign",
         "Build_StandaloneWidgetSign_Huge_C",
         "Build_StandaloneWidgetSign_Large_C",
         "Build_StandaloneWidgetSign_Medium_C",
