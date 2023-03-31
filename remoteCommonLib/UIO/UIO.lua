@@ -34,6 +34,7 @@ UIO.UIOElements = UIOElements
 
 
 function UIOElements:eventHandler( edata )
+    if edata == nil or type( edata ) ~= "table" or #edata < 2 then return false end
     local name = edata[ 1 ]
     local sender = edata[ 2 ]
     
