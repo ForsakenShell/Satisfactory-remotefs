@@ -1,4 +1,4 @@
-____EEPROM_VERSION_FULL = { 1, 2, 7, 'b' }
+____EEPROM_VERSION_FULL = { 1, 2, 7, 'c' }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
@@ -413,11 +413,7 @@ end
 function getRemoteFileVersionEx( remote )
     -- No internet card means no updates
     if ____InternetCard == nil then
-        local r = "No InternetCard installed in computer"
-        if panicOnFail then
-            computer.panic( debug.traceback( r, 3 ) )
-        end
-        return nil, r
+        return nil, "No InternetCard installed in computer"
     end
     
     -- Try the smaller "version" file that (if it exists) will just contain the version table
@@ -426,36 +422,37 @@ function getRemoteFileVersionEx( remote )
     if not result then
         -- Doesn't exist or some other problem, try and get the full remote file
         result, data = remoteFetchFile( remote, false, 3 )
+    else
+        remote = vOnlyFile
     end
     if not result then
         return nil, data
     end
     
-    -- got the file, now parse the first line to get the version
-    local o = string.find( data, '{', 1, true )
-    if o == nil or o < 1 then return nil, "First line does not contain version table" end
-    local c = string.find( data, '}', o, true )
-    if c == nil or c < 1 then return nil, "First line does not contain version table" end
-    local raw = string.sub( data, o + 1, c - 1 )
+    -- Extract the table from the first line and turn it into a function call in our sandbox
+    local extract = data:match( "%b{}" )
+    if extract == nil then return nil, "First line does not contain version table" end
+    local first_line = "v(" .. extract .. ")"
     
-    -- Now separate the comma delimited string into a table
-    local pattern = string.format( '([^%s]+)', ',' )
     
-    local results = {}
-    local _ = string.gsub( raw, pattern,
-        function( c )
-            results[ #results + 1 ] = c
-        end )
-    if #results ~= 4 then return nil, "First line does not contain version table" end
+    -- Setup our sandbox
+    local version
+    local env = {}
+    function env.v( t )
+        if type( t ) ~= "table" or #t ~= 4 then return end
+        -- Force results into the expected form
+        version = {
+            tonumber( t[ 1 ] ),
+            tonumber( t[ 2 ] ),
+            tonumber( t[ 3 ] ),
+            t[ 4 ] }
+    end
     
-    -- Force results into the expected form
-    local version = {
-        tonumber( results[ 1 ] ),
-        tonumber( results[ 2 ] ),
-        tonumber( results[ 3 ] ),
-        string.sub( results[ 4 ], 2, #results[ 4 ] - 1 ) }
+    -- Run the line in the sandbox
+    load( first_line, remote, 'bt', env )()
+    if version == nil then return nil, "First line does not contain version table" end
     
-    --print( string.format( "Remote version:\n\tURL: %s\n\tRaw Version: {%s}\n\tMajor: %d\n\tMinor: %d\n\tRevision: %d\n\tHotfix: %s", remote, raw, version[ 1 ], version[ 2 ], version[ 3 ], version[ 4 ] ))
+    --print( string.format( "Remote version:\n\tURL: %s\n\tRaw Version: {%s}\n\tMajor: %d\n\tMinor: %d\n\tRevision: %d\n\tHotfix: %s\n\n----", remote, extract, version[ 1 ], version[ 2 ], version[ 3 ], version[ 4 ] ))
     
     return version, remote
 end
