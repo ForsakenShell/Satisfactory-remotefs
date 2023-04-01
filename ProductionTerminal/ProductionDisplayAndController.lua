@@ -64,7 +64,11 @@ Network Setup:
 +- "PipelinePump" (optional):
 |   0+  Only for Fluid primary outputs, can open and close the valve when the Machines are turned on and off,
 |       respectively.
-
+|
++- "Single Point Module Panel" (optional):
+|   0+  Used to hold a single button to trigger the computer to download the latest version of the EEPROM and reboot.
+|       Recommended:  Colorable mushroom button which will be illuminated when the system boots up and dimmed when
+|         [re]booting.
 
 ]]--
 
