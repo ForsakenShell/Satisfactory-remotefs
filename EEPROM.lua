@@ -1,3 +1,9 @@
+____EEPROM_VERSION_FULL = { 1, 2, 7, 'b' }
+-- This will get updated with each new script release Major.Minor.Revision.Hotfix
+-- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
+-- Do not move from the topline of this file as it is checked remotely
+-- Also be sure to update EEPROM.lua.version to match
+
 ---
 --- Created by 1000101
 --- DateTime: 11/03/2023 3:30 am
@@ -34,6 +40,7 @@
 
 ____RemoteFSBaseURL = "http://localhost/remotefs"
 ____RemoteCommonLib = "/remoteCommonLib"                                --- Used for common libraries to all computers no matter their specific purpose
+____EEPROM_URL      = ____RemoteFSBaseURL .. '/EEPROM.lua'
 
 --- You can run your own tiny web server on your own machine or another machine on your
 --- own network so you don't need to use git or some other hosting service on the internet.
@@ -45,8 +52,16 @@ ____RemoteCommonLib = "/remoteCommonLib"                                --- Used
 
 
 
-____EEPROM_VERSION_FULL = { 1, 2, 0, 'a' }
-____EEPROM_VERSION = string.format( 'v%d.%d.%d%s', ____EEPROM_VERSION_FULL[ 1 ], ____EEPROM_VERSION_FULL[ 2 ], ____EEPROM_VERSION_FULL[ 3 ], ____EEPROM_VERSION_FULL[ 4 ] )
+---Format a version table of { integer, integer, integer, char } into a string
+function getVersionString( version )
+    if version == nil or type( version ) ~= "table" or #version ~= 4
+    or type( version[ 1 ] ) ~= "number" or type( version[ 2 ] ) ~= "number"
+    or type( version[ 3 ] ) ~= "number" or type( version[ 4 ] ) ~= "string" then return '' end
+    return string.format( 'v%d.%d.%d%s', version[ 1 ], version[ 2 ], version[ 3 ], version[ 4 ] )
+end
+
+-- formatted string of ____EEPROM_VERSION_FULL (can't use )
+____EEPROM_VERSION = getVersionString( ____EEPROM_VERSION_FULL)
 print( "\n\nSystem EEPROM " .. ____EEPROM_VERSION .. "...\n\n" )
 
 
@@ -233,18 +248,26 @@ ____RequiredFiles = {}
 ---@param remote string Full URL to the file
 ---@param panicOnFail boolean computer.panic() if the file cannot be retrieved; otherwise return nil
 ---@param debugTraceLevel? integer debug.traceback level, default is 2
+---@return boolean, string true, data or false, reason
 local function remoteFetchFile( remote, panicOnFail, debugTraceLevel )
     local request = ____InternetCard:request( remote, "GET", "" )
     local result, data = request:await()
-    if panicOnFail
-    and( ( result == nil )or( result < 200 or result > 299 ) )then  -- Magic numbers are bad, 2xx is the request successful response range
+    local result = ( result ~= nil )and( result >= 200 and result <= 299 )  -- Magic numbers are bad, 2xx is the request successful response range
+    if panicOnFail and not result then
         debugTraceLevel = debugTraceLevel or 2
         if debugTraceLevel < 2 then debugTraceLevel = 2 end
         computer.panic( debug.traceback( "Could not fetch file from: " .. remote, debugTraceLevel ) )
     end
-    return data
+    return result, data
 end
 
+
+---Get the URL for the module and remote filesystem
+local function getRemoteURL( modname, remotefs )
+    local fs = ____filesystem.path( 1, remotefs or ____RemoteFS )
+    local url = ____RemoteFSBaseURL .. fs .. modname
+    return url
+end
 
 ---Load the given module.  This implementation looks at the local disk mounted as root and/or the remote filesystem specified by the computer settings or the explicit remote filesystem passed as the remotefs parameter.
 ---@param modname string filepath to load and compile; filepath should be relative to the (remote) filesystem root
@@ -265,11 +288,11 @@ function require( modname, remotefs, panicOnFailure )
     end
     
     
-    -- As we may manipulate the local filename, grab a copy for remote filename manipulation
-    local remote = modname
-    
     -- Assume the computer specific remote filesystem if not specified
     remotefs = ____filesystem.path( 1, remotefs or ____RemoteFS )
+    
+    -- Get the remote URL
+    local remote = getRemoteURL( modname, remotefs )
     
     -- Prefix the local filename with the RemoteCommonLib fs path to prevent local file conflicts
     if remotefs == ____RemoteCommonLib then
@@ -290,15 +313,11 @@ function require( modname, remotefs, panicOnFailure )
     -- Try and fetch from remote
     if ____InternetCard ~= nil and remotefs ~= nil then
         
-        -- Build the URL
-        remote = ____RemoteFSBaseURL .. remotefs .. remote
-        
-        
         -- Fetch the file
-        local data = remoteFetchFile( remote, ____AlwaysFetchFromRemote and panicOnFailure, 3 )
+        local result, data = remoteFetchFile( remote, ____AlwaysFetchFromRemote and panicOnFailure, 3 )
         
         -- Always fetch but don't panic, return nil
-        if data == nil and ____AlwaysFetchFromRemote and not panicOnFailure then
+        if not result and ____AlwaysFetchFromRemote and not panicOnFailure then
             return nil
         end
         
@@ -382,36 +401,125 @@ end
 
 
 
+---Downloads the remote copy of a module, using the same parameters as you would for require(), and returns it's version which must be the first line of it's source file (see EEPROM.lua an example).  The variable name does not matter, not does it matter if it's in a comment, just that a table of "{ integer, integer, integer, char }" (no quotes) appears on the first line.
+---@return version, reason table, string returns nil, reason on any error and version, remote URL on success
+function getRemoteFileVersion( modname, remotefs )
+    local remote = getRemoteURL( modname, remotefs )
+    return getRemoteFileVersionEx( remote )
+end
+
+---Downloads the remote copy of a remote file and returns it's version which must be the first line of it's source file (see EEPROM.lua an example).  The variable name does not matter, not does it matter if it's in a comment, just that a table of "{ integer, integer, integer, char }" (no quotes) appears on the first line.
+---@return version, reason table, string returns nil, reason on any error and version, remote URL on success
+function getRemoteFileVersionEx( remote )
+    -- No internet card means no updates
+    if ____InternetCard == nil then
+        local r = "No InternetCard installed in computer"
+        if panicOnFail then
+            computer.panic( debug.traceback( r, 3 ) )
+        end
+        return nil, r
+    end
+    
+    -- Try the smaller "version" file that (if it exists) will just contain the version table
+    local vOnlyFile = remote .. ".version"
+    local result, data = remoteFetchFile( vOnlyFile, false, 3 )
+    if not result then
+        -- Doesn't exist or some other problem, try and get the full remote file
+        result, data = remoteFetchFile( remote, false, 3 )
+    end
+    if not result then
+        return nil, data
+    end
+    
+    -- got the file, now parse the first line to get the version
+    local o = string.find( data, '{', 1, true )
+    if o == nil or o < 1 then return nil, "First line does not contain version table" end
+    local c = string.find( data, '}', o, true )
+    if c == nil or c < 1 then return nil, "First line does not contain version table" end
+    local raw = string.sub( data, o + 1, c - 1 )
+    
+    -- Now separate the comma delimited string into a table
+    local pattern = string.format( '([^%s]+)', ',' )
+    
+    local results = {}
+    local _ = string.gsub( raw, pattern,
+        function( c )
+            results[ #results + 1 ] = c
+        end )
+    if #results ~= 4 then return nil, "First line does not contain version table" end
+    
+    -- Force results into the expected form
+    local version = {
+        tonumber( results[ 1 ] ),
+        tonumber( results[ 2 ] ),
+        tonumber( results[ 3 ] ),
+        string.sub( results[ 4 ], 2, #results[ 4 ] - 1 ) }
+    
+    --print( string.format( "Remote version:\n\tURL: %s\n\tRaw Version: {%s}\n\tMajor: %d\n\tMinor: %d\n\tRevision: %d\n\tHotfix: %s", remote, raw, version[ 1 ], version[ 2 ], version[ 3 ], version[ 4 ] ))
+    
+    return version, remote
+end
+
+
+---Gets the version check version which is the Revision and hotfix component (as a fraction) combined, a hotfix will never result in a full Revision increment as returned by this function
+---@return number Revision + Hotfix returned as a float
+function getVersionCheckVersion( version )
+    if version == nil or type( version ) ~= "table" or #version ~= 4
+    or type( version[ 1 ] ) ~= "number" or type( version[ 2 ] ) ~= "number"
+    or type( version[ 3 ] ) ~= "number" or type( version[ 4 ] ) ~= "string" then return -1 end
+    local hotfix = 0
+    if version[ 4 ] ~= '' then
+        local b = string.byte( version[ 4 ], 1 )
+        if b > 96 and b < 123 then  -- must be 'a' .. 'z' or we ignore it
+            hotfix = ( b - 96 )  / 100
+        end
+    end
+    return version[ 3 ] + hotfix
+end
+
+
+---Downloads the remote copy of the boot loader module and returns it's version and remote URL or nil and an error string
+function getRemoteBootLoaderVersion()
+    local version, reason = getRemoteFileVersion( ____BootLoader )
+    return version, reason
+end
+
+
+---Downloads the remote copy of the EEPROM module and returns it's version and remote URL or nil and an error string
+function getRemoteEEPROMVersion()
+    local version, reason = getRemoteFileVersionEx( ____EEPROM_URL )
+    return version, reason
+end
+
+
+
+
 ---Downloads the latest EEPROM.lua and flashes the chip; does not reboot the computer
 ---@param panicOnFail? boolean Panic the computer on failure, default: false
----@return boolean, string success/failure and, the remote URL or nil if no network card
+---@return boolean, string success/failure and, the remote URL or error reason
 function updateEEPROM( panicOnFail )
     panicOnFail = panicOnFail or false
     
     -- No internet card means no updates
     if ____InternetCard == nil then
+        local r = "No InternetCard installed in computer"
         if panicOnFail then
-            computer.panic( debug.traceback( "No InternetCard installed in computer", 2 ) )
-        else
-            return false, nil
+            computer.panic( debug.traceback( r, 3 ) )
         end
+        return false, r
     end
     
-    -- Build the remote URL for the EEPROM
-    local remote = ____RemoteFSBaseURL .. "/EEPROM.lua"
-    local request = ____InternetCard:request( remote, "GET", "" )
-    
-    -- Fetch it
-    local data = remoteFetchFile( remote, panicOnFail, 3 )
-    if data == nil then
-        return false, remote -- Let the caller handle this
+    -- Fetch the EEPROM
+    local result, data = remoteFetchFile( ____EEPROM_URL, panicOnFail, 3 )
+    if not result then
+        return false, data -- Let the caller handle this
     end
     
     -- Flash it
     computer.setEEPROM( data )
     
     -- Return success
-    return true, remote
+    return true, ____EEPROM_URL
 end
 
 
