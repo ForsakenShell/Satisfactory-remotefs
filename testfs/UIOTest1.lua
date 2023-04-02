@@ -18,8 +18,8 @@
 ]]
 
 
-require( "/UIO/UIOElements/RSSElement.lua", ____RemoteCommonLib )
-require( "/UIO/UIOElements/ButtonModule.lua", ____RemoteCommonLib )
+require( "/UIO/UIOElements/RSSElement.lua", EEPROM.Remote.CommonLib )
+require( "/UIO/UIOElements/ButtonModule.lua", EEPROM.Remote.CommonLib )
 
 
 

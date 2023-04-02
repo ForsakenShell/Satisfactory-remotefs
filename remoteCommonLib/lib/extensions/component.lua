@@ -1,7 +1,7 @@
 -- component class extension functions
 
 
-require( "/lib/extensions/tables.lua", ____RemoteCommonLib )
+require( "/lib/extensions/tables.lua", EEPROM.Remote.CommonLib )
 
 
 ---Find and return a table of all the NetworkComponent proxies that are of the given class[es]

@@ -28,12 +28,12 @@
 -- Requirements
 
 
-local Color = require( "/lib/Colors.lua", ____RemoteCommonLib )
-local Vector2d = require( "/lib/Vector2d.lua", ____RemoteCommonLib )
-local Vector2f = require( "/lib/Vector2f.lua", ____RemoteCommonLib )
-local Vector4F = require( "/lib/Vector4F.lua", ____RemoteCommonLib )
+local Color = require( "/lib/Colors.lua", EEPROM.Remote.CommonLib )
+local Vector2d = require( "/lib/Vector2d.lua", EEPROM.Remote.CommonLib )
+local Vector2f = require( "/lib/Vector2f.lua", EEPROM.Remote.CommonLib )
+local Vector4F = require( "/lib/Vector4F.lua", EEPROM.Remote.CommonLib )
 
-local ClassMeta = require( "/lib/ClassMeta.lua", ____RemoteCommonLib )
+local ClassMeta = require( "/lib/ClassMeta.lua", EEPROM.Remote.CommonLib )
 
 
 

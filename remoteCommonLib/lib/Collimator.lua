@@ -7,7 +7,7 @@ local __DebugMode = true
 
 
 
-local utf8 = require( "/lib/utf8.lua", ____RemoteCommonLib )
+local utf8 = require( "/lib/utf8.lua", EEPROM.Remote.CommonLib )
 
 
 
@@ -23,7 +23,7 @@ end
 
 local ClassMeta = nil
 if __DebugMode then
-    ClassMeta = require( "/lib/ClassMeta.lua", ____RemoteCommonLib )
+    ClassMeta = require( "/lib/ClassMeta.lua", EEPROM.Remote.CommonLib )
 end
 
 

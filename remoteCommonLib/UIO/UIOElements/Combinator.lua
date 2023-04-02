@@ -4,7 +4,7 @@
 
 
 
-local UIO = require( "/UIO/UIO.lua", ____RemoteCommonLib )
+local UIO = require( "/UIO/UIO.lua", EEPROM.Remote.CommonLib )
 if UIO.UIOElements.Combinator ~= nil then return UIO.UIOElements.Combinator end
 
 
@@ -92,7 +92,7 @@ function Combinator:setSignalHandler( signal, handler )
         return false
     end
     
-    local result = true
+    local result = false
     
     -- Apply to elements
     for _, element in pairs( self.____elements ) do

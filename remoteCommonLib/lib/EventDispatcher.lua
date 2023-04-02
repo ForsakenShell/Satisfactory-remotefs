@@ -1,4 +1,4 @@
-local fifo = require( "/lib/fifo", ____RemoteCommonLib )
+local fifo = require( "/lib/fifo", EEPROM.Remote.CommonLib )
 
 -- We dont want user to be able to mess with the events
 local old_pull = event.pull

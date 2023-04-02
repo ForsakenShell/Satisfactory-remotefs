@@ -1,4 +1,5 @@
-local UIO = require( "/UIO/UIO.lua", ____RemoteCommonLib )
+local UIO = require( "/UIO/UIO.lua", EEPROM.Remote.CommonLib )
+if UIO.UIOElements.Extensions ~= nil then return UIO.UIOElements.Extensions end
 
 
 

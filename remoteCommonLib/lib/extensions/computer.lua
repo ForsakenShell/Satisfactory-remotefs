@@ -1,7 +1,7 @@
 -- computer class extension functions
 
 
-require( "/lib/extensions/tables.lua", ____RemoteCommonLib )
+require( "/lib/extensions/tables.lua", EEPROM.Remote.CommonLib )
 
 
 ---Find and return a table of all the PCIDevices that are of the given class[es]

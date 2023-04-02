@@ -1,11 +1,11 @@
 -- UI class for dealing with dynamic elements of RSS Signs
 
 
-local UIO = require( "/UIO/UIO.lua", ____RemoteCommonLib )
+local UIO = require( "/UIO/UIO.lua", EEPROM.Remote.CommonLib )
 if UIO.UIOElements.RSSElement ~= nil then return UIO.UIOElements.RSSElement end
 
 
-local ClassGroup = require( "/lib/classgroups.lua", ____RemoteCommonLib )
+local ClassGroup = require( "/lib/classgroups.lua", EEPROM.Remote.CommonLib )
 
 
 

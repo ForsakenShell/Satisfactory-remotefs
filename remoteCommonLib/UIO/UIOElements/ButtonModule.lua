@@ -1,11 +1,11 @@
 -- UI class for dealing with Buttom Modules
 
 
-local UIO = require( "/UIO/UIO.lua", ____RemoteCommonLib )
+local UIO = require( "/UIO/UIO.lua", EEPROM.Remote.CommonLib )
 if UIO.UIOElements.ButtonModule ~= nil then return UIO.UIOElements.ButtonModule end
 
 
-local ClassGroup = require( "/lib/classgroups.lua", ____RemoteCommonLib )
+local ClassGroup = require( "/lib/classgroups.lua", EEPROM.Remote.CommonLib )
 
 
 

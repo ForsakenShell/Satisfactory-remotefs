@@ -12,7 +12,7 @@ CoreNetwork.__PacketEnclosePayloadChar         = '\a'     -- Extended chars will
 CoreNetwork.__PacketPayloadTokenizePattern  = string.format( "(%%w+)=(%%b%s%s)", CoreNetwork.__PacketEnclosePayloadChar, CoreNetwork.__PacketEnclosePayloadChar )
 CoreNetwork.__PacketPayloadHeadPattern      = string.format( "%%s=%s%%s%s"     , CoreNetwork.__PacketEnclosePayloadChar, CoreNetwork.__PacketEnclosePayloadChar )
 CoreNetwork.__PacketPayloadPattern          = string.format( "%%s %%s=%s%%s%s" , CoreNetwork.__PacketEnclosePayloadChar, CoreNetwork.__PacketEnclosePayloadChar )
-CoreNetwork.__json                          = require( "/lib/json.lua", ____RemoteCommonLib )
+CoreNetwork.__json                          = require( "/lib/json.lua", EEPROM.Remote.CommonLib )
 
 CoreNetwork.__index = CoreNetwork
 _G[ "____CoreNetwork" ] = CoreNetwork

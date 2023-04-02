@@ -2,7 +2,7 @@
 -- See bottom for debug dumps of connected network nicks
 
 -- Save debug dumps to 'console.txt'
-require( '/lib/ConsoleToFile.lua', ____RemoteCommonLib )
+require( '/lib/ConsoleToFile.lua', EEPROM.Remote.CommonLib )
 
 
 
