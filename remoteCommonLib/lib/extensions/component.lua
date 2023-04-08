@@ -31,3 +31,36 @@ function component.getComponentsByClass( class )
 end
 
 
+
+
+-- Storage constants --
+component.INV_STORAGE       = 'StorageInventory'
+component.INV_INPUT         = 'InputInventory'
+component.INV_OUTPUT        = 'OutputInventory'
+component.INV_POTENTIAL     = 'InventoryPotential'
+
+---Get an inventories index by it's internal name.  Why?  Because not everything with an inventory uses the same index.
+function component.getInventoryIndexByName( proxy, inventory )
+    if proxy == nil or type( proxy ) ~= "userdata" then return nil end
+    local gi = proxy[ "getInventories" ]
+    if gi == nil or type( gi ) ~= "function" then return nil end
+    local inventories = gi( proxy )
+    for idx = 1, #inventories do
+        local inv = inventories[ idx ]
+        if inv.internalName == inventory then return idx end
+    end
+    return nil
+end
+
+---Get an inventory by it's internal name instead of index.  Why?  Because not everything with an inventory uses the same index.
+function component.getInventoryByName( proxy, inventory )
+    if proxy == nil or type( proxy ) ~= "userdata" then return nil end
+    local gi = proxy[ "getInventories" ]
+    if gi == nil or type( gi ) ~= "function" then return nil end
+    local inventories = gi( proxy )
+    for _, inv in pairs( inventories ) do
+        if inv.internalName == inventory then return inv end
+    end
+    return nil
+end
+

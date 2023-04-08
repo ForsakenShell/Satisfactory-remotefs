@@ -31,7 +31,7 @@ local function createCombinatorTemplate()
     return o
 end
 
----@class Combinator:UIO.UIOElement
+---@class Combinator:UIOElement
 local Combinator = createCombinatorTemplate()
 UIO.UIOElements.Combinator = Combinator
 
@@ -46,18 +46,16 @@ local function multicast( elements, func, filters, ... )
     if elements == nil or type( elements ) ~= "table" or #elements == 0 then return end
     if filters ~= nil and type( filters ) ~= "table" then return end
     for _, element in pairs( elements ) do
-        local include = true
-        if filters ~= nil then
+        local f = element[ func ]
+        local include = f ~= nil and type( f ) == "function"
+        if include and filters ~= nil then
             if filters.uioclass ~= nil and element.CLASS_ID == filters.uioclass then include = false end
             if filters.zOffset ~= nil and element.zOffset ~= nil and element.zOffset ~= filters.zOffset then include = false end
         end
         if include then
             --print( "\t" .. element.target.internalName )
-            local f = element[ func ]
             --print( "\t" .. tostring( f ) )
-            if f ~= nil and type( f ) == "function" then
-                f( element, ... )
-            end
+            f( element, ... )
         end
     end
 end
@@ -154,6 +152,18 @@ function Combinator:setPosition( position )
     multicast( self.____elements, "setPosition", nil, position )
 end
 
+function Combinator:setValue( value )
+    multicast( self.____elements, "setValue", nil, value )
+end
+
+function Combinator:setMin( min )
+    multicast( self.____elements, "setMin", nil, min )
+end
+
+function Combinator:setMax( max )
+    multicast( self.____elements, "setMax", nil, max )
+end
+
 
 
 
@@ -198,14 +208,26 @@ function Combinator:setPositionEx( position, filters )
     multicast( self.____elements, "setPosition", filters, position )
 end
 
+function Combinator:setValueEx( value, filters )
+    multicast( self.____elements, "setValue", filters, value )
+end
+
+function Combinator:setMinEx( min, filters )
+    multicast( self.____elements, "setMin", filters, min )
+end
+
+function Combinator:setMaxEx( max, filters )
+    multicast( self.____elements, "setMax", filters, max )
+end
+
 
 
 
 --------------------------------------------------------------------------------
 
 ---Create an UIO.UIOElement for an Element Combinator
----@param elements table: Table of UIOElements to be treated as a single entity
----@return Combinator?: The UIOElement or nil
+---@param elements table Table of UIOElements to be treated as a single entity
+---@return Combinator The UIOElement or nil
 function Combinator.create( elements )
     if elements ~= nil and type( elements ) ~= "table" then
         computer.panic( "Combinator.create() invalid children\n" .. debug.traceback() )

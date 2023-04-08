@@ -10,7 +10,7 @@ local ClassGroup = require( "/lib/classgroups.lua", EEPROM.Remote.CommonLib )
 
 
 
----@class ButtonModule:UIO.UIOElement
+---@class ButtonModule:UIOElement
 local ButtonModule = UIO.UIOElement.template(
     "ButtonModule",
     ClassGroup.Modules.Buttons.All,
@@ -36,8 +36,8 @@ end
 
 
 ---Create an UIO.UIOElement for a Panel Button Module
----@param button userdata: The button
----@return ButtonModule?: The UIOElement or nil
+---@param button userdata The button
+---@return ButtonModule The UIOElement or nil
 function ButtonModule.create( button )
     return UIO.UIOElement.create(
         ButtonModule,

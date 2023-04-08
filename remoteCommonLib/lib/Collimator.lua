@@ -2,12 +2,17 @@ local Collimator = _G[ "____Collimator" ]
 if Collimator ~= nil then return Collimator end
 
 
-local __DebugMode = true
-
-
 
 
 local utf8 = require( "/lib/utf8.lua", EEPROM.Remote.CommonLib )
+
+
+
+
+--local stringlen = string.len
+--local stringsub = string.sub
+local stringlen = utf8.len
+local stringsub = utf8.sub
 
 
 
@@ -22,7 +27,7 @@ end
 
 
 local ClassMeta = nil
-if __DebugMode then
+if EEPROM.Settings.DebugMode then
     ClassMeta = require( "/lib/ClassMeta.lua", EEPROM.Remote.CommonLib )
 end
 
@@ -35,26 +40,26 @@ end
 ---@field fcolor Color foreground color for drawText
 ---@field bcolor Color background color for drawText
 ---@field sep string character to separate child table results returned by resolver
----@field resolver function function( source: table|userdata ): string|table, color|table, color|table
+---@field resolver function function( source: table|userdata ): string|table, color|table, color|table, integer|table
 local Column = {
     header = 'column',
     width = 8,
     fcolor = { r = 1.0, g = 1.0, b = 1.0, a = 1.0 },
     bcolor = { r = 0.0, g = 0.0, b = 0.0, a = 1.0 },
     sep = ' ',
-    resolver = function( source ) return nil, nil, nil end,
+    resolver = function( source ) return nil, nil, nil, nil end,
 }
 Column.__index = Column
 
 
 local Column_MetaData = nil
-if __DebugMode then
+if EEPROM.Settings.DebugMode then
     Column_MetaData = ClassMeta.new( {
         metatablename = "Column",
         metatable = Column,
         fields = {
             ClassMeta.FieldMeta.new( { name = "header", ftype = "string" } ),
-            ClassMeta.FieldMeta.new( { name = "width", ftype = "number", valuetest = ClassMeta.FieldMeta.Common.Test_Integer_Positive } ),
+            ClassMeta.FieldMeta.new( { name = "width", ftype = "number", allownil = true, valuetest = ClassMeta.FieldMeta.Common.Test_Integer_Positive } ),
             ClassMeta.FieldMeta.new( { name = "fcolor", ftype = "table", allownil = true, valuetest = Common_Test_ValidColor } ),
             ClassMeta.FieldMeta.new( { name = "bcolor", ftype = "table", allownil = true, valuetest = Common_Test_ValidColor } ),
             ClassMeta.FieldMeta.new( { name = "sep", ftype = "string", allownil = true } ),
@@ -64,15 +69,45 @@ if __DebugMode then
 end
 
 function Column.new( o )
-    if __DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = Column_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
+    
     setmetatable( o, { __index = Column } )
+    o:update()
     return o
 end
 
-
+function Column:update()
+    -- Centre the header in the column space
+    local text = self.header
+    local colWid = self.width
+    local tLen = stringlen( text )
+    local d = colWid - tLen
+    if d > 2 then
+        -- Pad it out
+        local h = ( d - 2 ) >> 1
+        local pre = ''
+        local post
+        if h > 0 then pre  = string.rep( '-', h ) end
+        if d & 1 then post = pre .. '-'
+        else          post = pre end
+        text = string.format( '%s %s %s', pre, text, post )
+        tLen = stringlen( text )
+        --text = text .. ' ' .. string.rep( '-', d - 1 )
+        --tLen = colWid
+    elseif d < 0 then
+        -- Truncate it once, right now
+        text = stringsub( text, 1, colWid )
+        tLen = colWid
+    end
+    self.____header = text
+    self.____headerLen = tLen
+    
+    -- Update the separator length
+    self.____sepLen = stringlen( self.sep )
+end
 
 
 
@@ -105,7 +140,7 @@ end
 
 
 local Collimator_MetaData = nil
-if __DebugMode then
+if EEPROM.Settings.DebugMode then
     Collimator_MetaData = ClassMeta.new( {
         metatablename = "Collimator",
         metatable = Collimator,
@@ -125,7 +160,7 @@ end
 ---@param o table Table to use as the Collimator, must pass Collimator_MetaData:isValid( o, false )
 ---@return Collimator, string Collimator, nil on success; nil, reason on error
 function Collimator.new( o )
-    if __DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = Collimator_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -145,56 +180,81 @@ end
 
 ---@param column Column
 ---@param source any
----@return string|table, color|table, color|table
+---@return string|table, color|table, color|table, integer|table
 local function resolveCell( column, source )
-    local data = ''
     local fcolor = column.fcolor
     local bcolor = column.bcolor
     
+    if source == column then
+        -- Make column headers as fast as possible
+        return column.____header, fcolor, bcolor, column.____headerLen
+    end
+    
+    local data = ''
+    local len = nil
     if source == nil then
-        return data, fcolor, bcolor
+        return data, fcolor, bcolor, len
     end
     
     local resolver = column.resolver
-    local dtype = type( source )
     
-    if resolver ~= nil and( dtype == "table" or dtype == "userdata" )then
-        local fdata, ffcolor, fbcolor  = resolver( source )
-        if fdata ~= nil then
-            local ftype = type( fdata )
-            if ftype == "string" then
-                data = fdata
-            elseif ftype == "number" then
-                data = tostring( fdata )
-            elseif ftype == "boolean" then
-                data = tostring( fdata )
-            elseif ftype == "table" then
+    local stype = type( source )
+    if resolver ~= nil then
+        if stype == "table" or stype == "userdata" then
+            local fdata, ffcolor, fbcolor, flen  = resolver( source )
+            if fdata ~= nil then
+                local ftype = type( fdata )
+                if ftype ~= "string" and ftype ~= "table" then
+                    print( debug.traceback( '\nCollimator - resolveCell() - Invalid data data type returned by resolver: "' .. ftype .. '", must be table or string' ) )
+                end
+                ftype = type( flen )
+                if ftype ~= "number" and ftype ~= "table" then
+                    print( debug.traceback( '\nCollimator - resolveCell() - Invalid len data type returned by resolver: "' .. ftype .. '", must be table or number' ) )
+                end
                 data = fdata
             end
-        end
-        if ffcolor ~= nil then fcolor = ffcolor end
-        if fbcolor ~= nil then bcolor = fbcolor end
-        
-    else
-        if dtype == "string" then
-            data = source
-        elseif dtype == "number" then
-            data = tostring( source )
-        elseif dtype == "boolean" then
-            data = tostring( source )
-        elseif dtype == "table" then
-            data = source
+            if ffcolor ~= nil then fcolor = ffcolor end
+            if fbcolor ~= nil then bcolor = fbcolor end
+            if flen ~= nil then len = flen end
+            
         else
             data = 'Unhandled'
-            print( 'Collimator - resolveCell() - Unhandled data type: "' .. dtype .. '"' )
+            print( debug.traceback( '\nCollimator - resolveCell() - Invalid source data type: "' .. stype .. '", must be table or userdata' ) )
         end
         
+    elseif stype == "table" or stype == "string" then
+        data = source
+        
+    else
+        data = 'Unhandled'
+        print( debug.traceback( '\nCollimator - resolveCell() - Invalid source data type: "' .. stype .. '", must be table or string' ) )
     end
     
-    return data, fcolor, bcolor
+    return data, fcolor, bcolor, len
 end
 
 
+
+
+---Truncate the string to the limit, if len is not nil it must be a number and is used as the string length for truncating
+local function truncateToColumn( data, len, limit )
+    local text = ''
+    local tLen = 0
+    if data ~= '' then
+        if len ~= nil then
+            tLen = len
+        else
+            tLen = stringlen( data )
+        end
+        if tLen > limit then
+            text = stringsub( data, 1, limit )
+            tLen = limit
+        else
+            text = data
+        end
+    end
+    return text, tLen
+end
 
 
 ---Builds the entire collimated row string; this function does not support returning colors for the parts of the collimated data
@@ -216,23 +276,21 @@ local function dataToString( self, nextColumnData )
             colWid = maxWidth - total
         end
         
-        local data, fcolor, bcolor = resolveCell( column, nextColumnData( i ) )
+        local data, fcolor, bcolor, len = resolveCell( column, nextColumnData( i ) )
         if type( data ) == "table" then
             data = table.concat( data, column.sep )
         end
         
-        -- Truncate the string to the column width
-        local text = ''
-        local tLen = 0
-        if data ~= '' then
-            tLen = utf8.len( data )
-            if tLen > colWid then
-                text = utf8.sub( data, 1, colWid )
-                tLen = colWid
-            else
-                text = data
+        if type( len ) == "table" then
+            local tLen = 0
+            for j = 1, #len do
+                tLen = tLen + len[ j ]
             end
+            len = tLen
         end
+        
+        -- Truncate the string to the column width
+        local text, tLen = truncateToColumn( data, len, colWid )
         
         -- Add the string and padding to get to the next column
         result = result .. text .. string.rep( ' ', colWid - tLen )
@@ -252,26 +310,11 @@ end
 
 
 
----Internal resolver for column headers
-local function resolveHeader( column )
-    -- Centre the header in the column space
-    local text = column.header
-    local colWid = column.width
-    local tLen = utf8.len( text )
-    local d = colWid - tLen
-    if d > 2 then
-        local h = d >> 1
-        text = string.rep( ' ', h ) .. text
-    end
-    return text
-end
-
-
 ---Get a collimated string of the headers
 function Collimator:headersToString()
     if self.__headers == nil then
-        -- Do it once, cuz it's slow
-        self.__headers = dataToString( self, function( i ) return resolveHeader( self.columns[ i ] ) end )
+        -- Do it once, cuz it's never expected to change (just set this to nil if it does)
+        self.__headers = dataToString( self, function( i ) return self.columns[ i ] end )
     end
     return self.__headers
 end
@@ -305,71 +348,65 @@ end
 
 ---Draw an individual text component of the data for this cell
 ---@param drawText function drawText( x, y, text, fcolor, bcolor )
----@param width integer maximum text length to draw (the actual text drawn will be truncated to this)
-local function drawSubText( drawText, x, y, width, t, fcolor, bcolor )
+---@param maxWidth integer maximum text length to draw (the actual text drawn will be truncated to this)
+---@return integer, integer new x after drawing t, remaining width
+local function drawSubText( drawText, x, y, text, fcolor, bcolor, len, maxWidth )
     -- Truncate the string the column width
-    if width <= 0 then return x, 0 end
+    if maxWidth <= 0 then return x, 0 end
     
-    local text = ''
-    local tLen = 0
-    if t ~= '' then
-        tLen = utf8.len( t )
-        if tLen > width then
-            text = utf8.sub( t, 1, width )
-            tLen = width
-        else
-            text = t
-        end
-    end
+    -- Truncate the string to the column width
+    local trunc, tLen = truncateToColumn( text, len, maxWidth )
     
-    drawText( x, y, text, fcolor, bcolor )
+    drawText( x, y, trunc, fcolor, bcolor )
     
-    return x + tLen, width - tLen
+    return x + tLen, maxWidth - tLen
 end
 
 
 ---Draw a set of text components of the data for this cell
 ---@param drawText function drawText( x, y, text, fcolor, bcolor )
----@param width integer maximum text length to draw (the actual text drawn will be truncated to this)
-local function drawSubArray( drawText, x, y, width, array, fcolor, bcolor, sep )
+---@param maxWidth integer maximum text length to draw (the actual text drawn will be truncated to this)
+local function drawSubArray( drawText, x, y, array, fcolor, bcolor, len, sep, sepLen, maxWidth )
     
     local farray = type( fcolor ) == "table" and fcolor[ "r" ] == nil and fcolor[ 1 ] ~= nil and fcolor[ 1 ][ "r" ] ~= nil
     local barray = type( bcolor ) == "table" and bcolor[ "r" ] == nil and bcolor[ 1 ] ~= nil and bcolor[ 1 ][ "r" ] ~= nil
+    local larray = type( len ) == "table" and len[ 1 ] ~= nil
     
-    local function getColors( idx )
-        local dfc = fcolor
-        local dbc = bcolor
-        if farray then dfc = fcolor[ idx ] end
-        if barray then dbc = bcolor[ idx ] end
-        return dfc, dbc
+    local function getColorWidth( idx )
+        local afc = fcolor
+        local abc = bcolor
+        local al = len
+        if farray then afc = fcolor[ idx ] end
+        if barray then abc = bcolor[ idx ] end
+        if larray then al = len[ idx ] end
+        return afc, abc, al
     end
     
-    for idx, data in pairs( array ) do
+    local aCount = #array
+    for idx = 1, aCount do
+        local data = array[ idx ]
         local dtype = type( data )
         
-        local dfc, dbc = getColors( idx )
+        local dfc, dbc, dl = getColorWidth( idx )
         
-        if idx > 1 then
+        if idx > 1 and sep ~= nil then
             -- Insert the separator
-            x, width = drawSubText( drawText, x, y, width, sep, dfc, dbc )
+            x, maxWidth = drawSubText( drawText, x, y, sep, dfc, dbc, sepLen, maxWidth )
         end
         
         if dtype == "table" then
-            x, width = drawSubArray( drawText, x, y, width, data, dfc, dbc, sep )
+            x, maxWidth = drawSubArray( drawText, x, y, data, dfc, dbc, dl, sep, sepLen, maxWidth )
             
         elseif dtype == "string" then
-            x, width = drawSubText( drawText, x, y, width, data, dfc, dbc )
+            x, maxWidth = drawSubText( drawText, x, y, data, dfc, dbc, dl, maxWidth )
             
-        elseif dtype == "number" then
-            x, width = drawSubText( drawText, x, y, width, tostring( data ), dfc, dbc )
-            
-        elseif dtype == "boolean" then
-            x, width = drawSubText( drawText, x, y, width, tostring( data ), dfc, dbc )
+        else
+            print( "Collimator - drawSubArray() : data must be a string or array of strings")
             
         end
     end
     
-    return x, width
+    return x, maxWidth
 end
 
 
@@ -391,19 +428,22 @@ local function drawData( self, x, y, nextColumnData )
             colWid = maxWidth - x
         end
         
-        local data, fcolor, bcolor = resolveCell( column, nextColumnData( i ) )
+        local data, fcolor, bcolor, dlen = resolveCell( column, nextColumnData( i ) )
         local dtype = type( data )
         if dtype == "table" then
-            drawSubArray( drawText, x, y, colWid, data, fcolor, bcolor, column.sep )
+            local sep = column.sep
+            local sepLen = column.____sepLen
+            if sep == '' then
+                sep = nil
+                sepLen = 0
+            end
+            drawSubArray( drawText, x, y, data, fcolor, bcolor, dlen, sep, sepLen, colWid )
             
         elseif dtype == "string" then
-            drawSubText( drawText, x, y, colWid, data, fcolor, bcolor )
+            drawSubText( drawText, x, y, data, fcolor, bcolor, dlen, colWid )
             
-        elseif dtype == "number" then
-            drawSubText( drawText, x, y, colWid, tostring( data ), fcolor, bcolor )
-            
-        elseif dtype == "boolean" then
-            drawSubText( drawText, x, y, colWid, tostring( data ), fcolor, bcolor )
+        else
+            print( "Collimator - drawData() : data must resolve to a string or array of strings")
             
         end
         
@@ -418,7 +458,8 @@ end
 
 ---Draw the collimated headers
 function Collimator:drawHeaders( x, y )
-    drawData( self, x, y, function( i ) return resolveHeader( self.columns[ i ] ) end )
+    --drawData( self, x, y, function( i ) return resolveHeader( self.columns[ i ] ) end )
+    drawData( self, x, y, function( i ) return self.columns[ i ] end )
 end
 
 

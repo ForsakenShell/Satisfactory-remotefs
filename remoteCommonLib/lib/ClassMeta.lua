@@ -221,16 +221,24 @@ end
 FieldMeta.Common = {}
 
 function FieldMeta.Common.Test_Integer_Positive( meta, value )
-    if value < 1 then
-        return false, string.format( "%s must be a positive integer - got %d", meta.name, value )
+    value = math.floor( value ) -- Force it to an integer
+    if value > 0 then
+        return true, nil
     end
-    return true, nil
+    return false, string.format( "%s must be a positive integer - got %d", meta.name, value )
 end
 function FieldMeta.Common.Test_Integer_NotNegative( meta, value )
+    value = math.floor( value ) -- Force it to an integer
     if value < 0 then
         return false, string.format( "%s must be a non-negative integer - got %d", meta.name, value )
     end
     return true, nil
+end
+function FieldMeta.Common.Test_Number_Positive( meta, value )
+    if value > 0.0 then
+        return true, nil
+    end
+    return false, string.format( "%s must be a positive number - got %1.6f", meta.name, value )
 end
 function FieldMeta.Common.Test_Number_NotNegative( meta, value )
     if value < 0.0 then

@@ -31,6 +31,10 @@ EEPROM = { Version = { full = { 1, 3, 8, '' } } }
 ---   alwaysfetchfromremote="false"
 ---     Controls whether to try to fetch the remote copy regardless of whether the file is on the local disk.
 ---
+---   debugmode="false"
+---     Sets the EEPROM.Settings.DebugMode flag.  Scripts can use this as their control to do extra debug stuff
+---     in their code.
+---
 ---  NOTE about the temporary file system:
 ---    In addition to your program requirements there must be enough RAM installed to host a
 ---    temporary file system.
@@ -210,6 +214,9 @@ EEPROM.Boot.BootLoader              = EEPROM.____filesystem.path( 1, EEPROM.Boot
 EEPROM.Boot.UseTempFileSystem       = stringToBoolean( EEPROM.Boot.ComputerSettings[ "usetempfilesystem" ], false ) and ( EEPROM.Boot.Disk == '' )
 EEPROM.Boot.TempRemoteFiles         = stringToBoolean( EEPROM.Boot.ComputerSettings[ "tempremotefiles" ], true )
 EEPROM.Boot.AlwaysFetchFromRemote   = stringToBoolean( EEPROM.Boot.ComputerSettings[ "alwaysfetchfromremote" ], false )
+EEPROM.Settings.DebugMode           = stringToBoolean( EEPROM.Boot.ComputerSettings[ "debugmode" ], false )
+
+
 
 
 if EEPROM.Boot.InternetCard ~= nil and EEPROM.Boot.RemoteFS ~= '' then
@@ -260,6 +267,10 @@ end
 
 EEPROM.Boot.UseLoadFile = ( ( EEPROM.Boot.Disk ~= '' ) or EEPROM.Boot.UseTempFileSystem ) and not EEPROM.Boot.TempRemoteFiles
 
+
+if EEPROM.Settings.DebugMode then
+    print( "Debug Mode     : On")
+end
 
 print( "BootLoader     : " .. EEPROM.Boot.BootLoader .. "\n\n" )
 

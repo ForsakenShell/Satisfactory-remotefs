@@ -280,6 +280,15 @@ function UIOElement:setSize( size ) end
 function UIOElement:setZIndex( index ) end
 function UIOElement:setPosition( position ) end
 
+function UIOElement:setValue( value ) end
+function UIOElement:getValue() return -1 end
+
+function UIOElement:setMin( min ) end
+function UIOElement:getMin() return -1 end
+
+function UIOElement:setMax( max ) end
+function UIOElement:getMax() return -1 end
+
 function UIOElement:update() end
 
 

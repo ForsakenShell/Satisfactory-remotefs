@@ -1,5 +1,5 @@
 print( "\n\nUpdating EEPROM from remote..." )
-local result = updateEEPROM()
+local result = EEPROM.Remote.Update()
 if result then
     print( "\tEEPROM successfully updated" )
 else

@@ -221,7 +221,6 @@ local RSSBuilder = {
 ---@field SignClasses SignClass array
 ---@field ElementTypes ElementType array
 local __internals = {
-    DebugMode = true,
     SignTypes = {},
     SignSizes = {},
     SignClasses = {},
@@ -340,7 +339,7 @@ end
 ---@param o table Table to use initialize SharedData, must pass SharedData_MetaData:isValid( o, false )
 ---@return SharedData, string SharedData, nil on success; nil, reason on error
 function SharedData.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = SharedData_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -496,7 +495,7 @@ end
 ---@param o table Table to use initialize TextData, must pass TextData_MetaData:isValid( o, false )
 ---@return TextData, string TextData, nil on success; nil, reason on error
 function TextData.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = TextData_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -618,7 +617,7 @@ local ElementData_MetaData = ClassMeta.new( {
 ---@param o table Table to use initialize ElementData, must pass ElementData_MetaData:isValid( o, false )
 ---@return ElementData, string ElementData, nil on success; nil, reason on error
 function ElementData.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = ElementData_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -669,7 +668,7 @@ end
 ---@param o table Table to use initialize HologramData, must pass HologramData_MetaData:isValid( o, false )
 ---@return HologramData, string HologramData, nil on success; nil, reason on error
 function HologramData.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = HologramData_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -715,7 +714,7 @@ end
 ---@param o table Table to use initialize RoundedData, must pass RoundedData_MetaData:isValid( o, false )
 ---@return RoundedData, string RoundedData, nil on success; nil, reason on error
 function RoundedData.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = RoundedData_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -772,7 +771,7 @@ end
 ---@param o table Table to use initialize FlatData, must pass FlatData_MetaData:isValid( o, false )
 ---@return FlatData, string FlatData, nil on success; nil, reason on error
 function FlatData.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = FlatData_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -836,7 +835,7 @@ end
 ---@param o table Table to use initialize MaterialData, must pass MaterialData_MetaData:isValid( o, false )
 ---@return MaterialData, string MaterialData, nil on success; nil, reason on error
 function MaterialData.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = MaterialData_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -879,7 +878,7 @@ local SignType_MetaData = ClassMeta.new( {
 ---@param o table
 ---@return SignType
 function SignType.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = SignType_MetaData:isValid( 'o', o, false )
         if not result then
             computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )
@@ -920,7 +919,7 @@ local SignSize_MetaData = ClassMeta.new( {
 ---@param o table
 ---@return SignSize
 function SignSize.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = SignSize_MetaData:isValid( 'o', o, false )
         if not result then
             computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )
@@ -981,7 +980,7 @@ local SignClass_MetaData = ClassMeta.new( {
 ---@param o table
 ---@return SignClass
 function SignClass.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = SignClass_MetaData:isValid( 'o', o, false )
         if not result then
             computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )
@@ -1046,7 +1045,7 @@ local SignLayout_MetaData = ClassMeta.new( {
 
 function SignLayout.isSignLayout( o )
     if o == nil or type( o ) ~= 'table' then return false end
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = SignLayout_MetaData:isValid( 'o', o, true )
         return result
     end
@@ -1059,7 +1058,7 @@ end
 ---@param o table Table to use initialize SignLayout, must pass SignLayout_MetaData:isValid( o, false )
 ---@return SignLayout, string SignLayout, nil on success; nil, reason on error
 function SignLayout.new( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = SignLayout_MetaData:isValid( 'o', o, false )
         if not result then return nil, reason end
     end
@@ -1073,7 +1072,7 @@ end
 ---@param element mImageData Element to add to the sign
 ---@return boolean, string true, nil on success, false, reason otherwise
 function SignLayout:addElement( element )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = ElementData_MetaData:isValid( "element", element, true )
         if not result then return false, reason end
     end
@@ -1225,7 +1224,7 @@ end
 ---@param id integer The value as returned by sign:GetSignType() for this sign type
 ---@param hologram HologramData As appropriate for type
 local function addSignType( stype, id, hologram )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         if stype == nil or type( stype ) ~= "string" or stype == '' then
             computer.panic( "stype must be a valid string\n" .. debug.traceback() )
         end
@@ -1293,7 +1292,7 @@ end
 ---@param signSize string The size as it is used to build the mSignTypeSize, eg "1x1" for "RSS_1x1", etc
 ---@param resolution Vector2d The resolution of this sign size
 local function addSignSize( signSize, resolution )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         if signSize == nil or type( signSize ) ~= "string" or signSize == '' then
             computer.panic( string.format( 'signSize is nil or invalid type\n%s', debug.traceback() ) )
         end
@@ -1365,7 +1364,7 @@ ClassMeta.FieldMeta.new( { name = "mRoundedData", ftype = "table", valuetest = S
 ]]
 
 local function addSignClass( classname, signSize, signType, mRoundedData, mHologramData )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         if classname == nil or type( classname ) ~= "string" or classname == '' then return end
     end
     
@@ -1483,7 +1482,7 @@ end
 
 
 local function addElementType( o )
-    if __internals.DebugMode then
+    if EEPROM.Settings.DebugMode then
         local result, reason = ElementType_MetaData:isValid( 'o', o, false )
         if not result then
             computer.panic( string.format( "%s\n%s", reason, debug.traceback() ) )

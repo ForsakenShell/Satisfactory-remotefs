@@ -1,10 +1,19 @@
-____VERSION_FULL = { 1, 3, 10, 'b' }
+Module = { Version = { full = { 1, 4, 11, '' } } }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
 -- Also be sure to update ProductionDisplayAndController.lua.version to match
 
 --[[ Production Display and Controller
+
+Required boot settngs:
+    remotefs="ProductionTerminal"
+    bootloader="ProductionDisplayAndController.lua"
+
+Optional control values:
+    triggeronthreshold="integer"        -- Percent 0..99, default: 25; must be smaller than triggeroffthreshold
+    triggeroffthreshold="integer"       -- Percent 1..100, default: 100; must be larger then triggeronthreshold
+    autoupdate="boolean"                -- true or false, default: false; automatically reflash the EEPROM and reboot the computer when a new remote version is detected
 
 This script will control a "bank" of "Machines" (Manufacturers or Extractors) power via a CircuitSwitch, valves
 (for fluids) and, codeable mergers (for solids).
@@ -16,7 +25,11 @@ All RSS Buildable Signs (optimized for 2:1) connected to the network will have t
 monitoring at a distance.
 
 Detailed monitoring of individual machines performance and will be output all the Screen (Build_Screen_C only)
-on the network.  At least one GPU and Screen is required, additional are optional.
+on the network.
+
+GPUs, Screens and Signs are optional, the terminal can run headless - no signs, no screens, nothing but console
+messages if so desired.
+
 
 Network Setup:
 |
@@ -32,10 +45,11 @@ Network Setup:
 |       Machines, Storage, thresholds, power status, etc.  All screens will display the same information.
 |       The computer will tell you the screen size required to fit all the information, typically as 2x2 or a
 |       2x3 configuration is sufficient for most situations but large storage/production machine arrays may
-|       require more.
+|       require bigger.
 |       NOTE:  Each Screen requires it's own GPU in the Computer to drive it.
 |       NOTE:  You do not need a screen+GPU or any RSS Signs for this script to function, you will just
 |           get no feedback beyond the controlled behaviour of the switch and machines.
+|       NOTE:  Only Screens require a GPU to drive it, RSS Signs do not.
 |
 +- "CircuitSwitch":
 |   1   Power Switch (or compatible) connected for controlling power flow to the Machines.  This can control
@@ -46,11 +60,10 @@ Network Setup:
 |       same resource.
 |       See the Reflection Viewer for class details and subclasses of said classes.
 |
-+- "FGBuildableStorage" OR "PipeReservoir":
++- "FGBuildableStorage" and/or "PipeReservoir":
 |   1+  This is the "Storage" for this controller.  This script monitors the Storage levels and turns the bank
-|       of Machines on/off as needed.  The type of Storage must match the Recipe "main result" - the first
-|       "primary" in the array returned from recipe:getProducts().  That is, if the Recipe produces a Liquid then
-|       the Storage must be PipeReservoir, otherwise it must be FBBuildableStorage.
+|       of Machines on/off as needed.  The type of Storage must match the machines outputs.  Machines with multiple
+|       outputs will require multiple storage arrays.  Storage must be appropriate for the output item type.
 |
 +- RSS Signs (optional):
 |   0+  Any RSS Sign with a 2:1 display ratio will work.  Intended for billboards and large wall signs to be seen
@@ -60,21 +73,36 @@ Network Setup:
 |       have been provided along-side this script for each 2:1 sign (2x1, 8x4, 16x8).  Additionally, the user (you)
 |       must set the icons on the sign as at the moment there is no way to do so from Lua.  Well, there is but there
 |       is no way to get the texture to set.
+|       NOTE: RSS Signs do not need a GPU to operate.
+|
++- "CodeableMerger" (optional):
+|   0+  Only for solid inputs, will pass through recipe items when the Machines are turned on and off, respectively.
+|       Recommended: Use the Powered Splitter and Merger mod as valves instead of Codeable Mergers as they require
+|         no active processing by the FIN computer and are handled directly by the game engine.
 |
 +- "PipelinePump" (optional):
-|   0+  Only for Fluid primary outputs, can open and close the valve when the Machines are turned on and off,
-|       respectively.
+|   0+  Only for Fluid inputs, can open and close the valve when the Machines are turned on and off, respectively.
 |
 +- "Single Point Module Panel" (optional):
 |   0+  Used to hold a single button to trigger the computer to download the latest version of the EEPROM and reboot.
-|       Recommended:  Colorable mushroom button which will be illuminated when the system boots up and dimmed when
+|       Recommended: Illuminable Mushroom Button which will be illuminated when the system boots up and dimmed when
 |         [re]booting.
+|
++- "Sizeable Module Panel" (optional):
+|   0+  1x3 - Layed out as follows:
+|             (0,2) A button to turn system on/off while inside threshold range - recommended: Illuminable Mushroom Button
+|             (0,1) "Potentiometer with Readout" for threshold max - readout is percent of storage volume
+|             (0,0) "Potentiometer with Readout" for threshold min - readout is percent of storage volume
 
 ]]--
 
 
+if EEPROM == nil then
+    panic( "EEPROM is out of date!\nRequired: EEPROM v1.3.8 or later")
+end
+
 -- Versioning --
-local versionString = getVersionString( ____VERSION_FULL )
+Module.Version.pretty = EEPROM.Version.ToString( Module.Version.full )
 --[[ version history
 1.0.0
  + Initial release
@@ -114,14 +142,19 @@ local versionString = getVersionString( ____VERSION_FULL )
     grey = can't check - current EEPROM is too old and does not support required functionality
     white = system has not yet checked
     red = error - see console output
+1.4.11
+ + Update for EEPROM v1.3.8
+ + Control logic update for multi-output recipes:
+ |  + Storage for all outputs must be provided
+ |  + Screen output has been adjusted to accomodate a column for the second output
 ]]
 
 
 
-if ____Disk_UUID ~= nil and ____Disk_UUID ~= '' then
+if EEPROM.Boot.Disk ~= nil and EEPROM.Boot.Disk ~= '' then
     -- A disk in the Production Terminal computer means the player is doing some
     -- maintainence on the network and will want a full log of events.
-    require( "/lib/ConsoleToFile.lua", ____RemoteCommonLib )
+    require( "/lib/ConsoleToFile.lua", EEPROM.Remote.CommonLib )
 end
 
 
@@ -129,17 +162,23 @@ end
 
 
 -- requires --
-local utf8                      = require( "/lib/utf8.lua", ____RemoteCommonLib )
-local ClassGroup                = require( "/lib/classgroups.lua", ____RemoteCommonLib )
+local utf8                      = require( "/lib/utf8.lua", EEPROM.Remote.CommonLib )
+
+local ClassGroup                = require( "/lib/classgroups.lua", EEPROM.Remote.CommonLib )
 local GPUs                      = ClassGroup.Displays.GPUs
 local Screens                   = ClassGroup.Displays.Screens
 local SolidStorage              = ClassGroup.Storage.Solids
 local FluidStorage              = ClassGroup.Storage.Fluids
 local RSSSigns                  = ClassGroup.Displays.Signs.ReallySimpleSigns
+
 local UIO                       = require( "/lib/UIOElements.lua" )
-local Collimator                = require( "/lib/Collimator.lua", ____RemoteCommonLib )
+
+local ItemDatum                 = require( "/lib/ItemDatum.lua", EEPROM.Remote.CommonLib )
+local MachineDatum              = require( "/lib/MachineDatum.lua", EEPROM.Remote.CommonLib )
+local StorageArray              = require( "/lib/StorageArray.lua", EEPROM.Remote.CommonLib )
+
 local RSSBuilder                = nil -- We will require this as needed
---RSSBuilder = require( "/lib/RSSBuilder.lua", ____RemoteCommonLib )
+--RSSBuilder = require( "/lib/RSSBuilder.lua", EEPROM.Remote.CommonLib )
 
 
 
@@ -151,18 +190,18 @@ local timesliceSeconds = 0.125          -- Place nice and timeslice!  0.125s bet
 local cycleUpdateMS = 100               -- Update the signs every X ms, default is 100 (0.1 seconds); regardless of events, this is how often the control logic is updated
 local signUpdateMS = 1000               -- Update the signs every X ms, default is 1000 (1 second); faster updates just lag the game, if there was player proximity detection then we might consider making this variable but there isn't so we won't
 local throughputUpdateMS = 10000        -- Update the throughput rate monitoring every X ms, default is 10000 (10 seconds); more time = more accurate but less frequent display updates of the "rate"
-local softwareUpdateMS = 60000          -- Only check for software updates once every 10 minutes, we don't need to hammer this and if we're smarter then we have .version files on the remote so we only need to transmit a few bytes an hour instead of several hundreds of kilobytes
+local softwareUpdateMS = 10 * 60 * 1000 -- Only check for software updates once every 10 minutes, we don't need to hammer this and if we're smarter then we have .version files on the remote so we only need to transmit a few bytes an hour instead of several hundreds of kilobytes
 
-local triggerOnThreshold = 0.25         -- 0.00 to 1.00 as a percent - TODO:  Convert to a potentiometer
-local triggerOffThreshold = 1.00        -- 0.00 to 1.00 as a percent - TODO:  Convert to a potentiometer
-
+triggerOnThreshold  = tonumber( EEPROM.Boot.ComputerSettings[ "triggeronthreshold"  ] or  25 ) / 100.0  -- 0.00 to 1.00 as a percent
+triggerOffThreshold = tonumber( EEPROM.Boot.ComputerSettings[ "triggeroffthreshold" ] or 100 ) / 100.0  -- 0.00 to 1.00 as a percent
+autoupdate          = toboolean( EEPROM.Boot.ComputerSettings[ "autoupdate" ] ) or false
 
 
 -- Control Constants - Don't mess with these --
 local panelsWide = 2                    -- Consant because magic numbers are bad, never change as things ARE coded for this width
 local screenCCPP = 30                   -- Screen Width in Character Columns Per Panel
 local screenCRPP = 15                   -- Screen Height in Character Rows Per Panel
-
+local screenWidth = panelsWide * screenCCPP
 
 
 -- String constants --
@@ -170,23 +209,10 @@ local prodOverallTitle = "Overall"
 local storOverallTitle = "Storage"
 
 
--- Storage constants --
-local INV_STORAGE   = 'StorageInventory'
-local INV_INPUT     = 'InputInventory'
-local INV_OUTPUT    = 'OutputInventory'
-local INV_SHARD     = 'InventoryPotential'
-
-function getInventoryByName( proxy, inventory )
-    local inventories = proxy:getInventories()
-    for _, inv in pairs( inventories ) do
-        if inv.internalName == inventory then return inv end
-    end
-    return nil
-end
 
 local INV_STATUS     = { "○", "◒", "●" } -- { "\u{25CB}", "\u{25D2}", "\u{25CF}" } -- empty circle, half full circle, full circle
-local PWR_STATUS_OFF = "☼" -- "\u{263C}" -- Sub With Rays
-local PWR_STATUS_ON = { "", "", "", "", "", "" } -- { "\u{EE06}", "\u{EE07}", "\u{EE08}", "\u{EE09}", "\u{EE0A}", "\u{EE0B}" } -- Spiny circle
+local ACT_STATUS_OFF = "☼" -- "\u{263C}" -- Sun With Rays
+local ACT_STATUS_ON = { "", "", "", "", "", "" } -- { "\u{EE06}", "\u{EE07}", "\u{EE08}", "\u{EE09}", "\u{EE0A}", "\u{EE0B}" } -- Spiny circle
 
 
 -- Some Colors for the RSS Signs and Screens --
@@ -207,54 +233,59 @@ local vcTerminal = cWhite
 local vcEEPROM = cWhite
 
 
-local nextVersionCheck = -1
+function rebootTerminal()
+    adminUIOReflashAndReboot:setState( false )
+    if userUIOSystemOnOff ~= nil then
+        userUIOSystemOnOff:setState( false )
+    end
+    drawBootScreens( ____RebootMessage, ____RebootMessageLen )
+    
+    switch.isSwitchOn = false
+    
+    local result, reason = EEPROM.Remote.Update()
+    if not result then
+        print( "could not update EEPROM:\n" .. reason )
+        return
+    end
+    
+    -- Reboot the computer
+    computer.beep()
+    computer.reset()
+end
+
+
+function versionCompare( name, a, b )
+    local result = cWhite
+    local vc = a
+    local vr, reason = b()
+    if vr == nil then
+        print( "Could not get remote " .. name .. " version:\n" .. reason )
+        result = cGrey
+    else
+        local comp = EEPROM.Version.Compare( vc, vr )
+        if comp < 0 then
+            print( "New " .. name .. " version available: " .. EEPROM.Version.ToString( vr ) )
+            result = cYellow
+            if autoupdate then
+                print( "Automatically rebooting on version update" )
+            end
+        else--if result >= 0 then
+            result =  cGreen
+        end
+    end
+    return result
+end
+
+nextVersionCheck = -1
 function versionCheck()
     local newTimestamp = computer.millis()
+    if nextVersionCheck > newTimestamp + softwareUpdateMS then nextVersionCheck = -1 end
     if newTimestamp < nextVersionCheck then return end
     
     nextVersionCheck = newTimestamp + softwareUpdateMS
     
-    -- Requires EEPROM version 7a or later
-    if ____EEPROM_VERSION_FULL == nil then
-        vcTerminal = cGrey
-        vcEEPROM = cGrey
-        return end
-    local cRevision = getVersionCheckVersion( ____EEPROM_VERSION_FULL )
-    if cRevision < 7.01 then
-        vcTerminal = cGrey
-        vcEEPROM = cGrey
-        return end
-    
-    -- Check for an EEPROM update
-    local version, reason = getRemoteEEPROMVersion()
-    if version == nil then
-        print( "Unable to check remote EEPROM version:\n" .. reason )
-        vcEEPROM = cRed
-    else
-        local rRevision = getVersionCheckVersion( version )
-        if cRevision < rRevision then
-            vcEEPROM = cYellow
-            print( "New EEPROM version available: " .. getVersionString( version ) )
-        else--if cRevision >= rRevision then
-            vcEEPROM = cGreen
-        end
-    end
-    
-    -- Check for a Terminal (boot loader) update
-    local version, reason = getRemoteBootLoaderVersion()
-    if version == nil then
-        print( "Unable to check remote boot loader version:\n" .. reason )
-        vcTerminal = cRed
-    else
-        cRevision = getVersionCheckVersion( ____VERSION_FULL )
-        local rRevision = getVersionCheckVersion( version )
-        if cRevision < rRevision then
-            vcTerminal = cYellow
-            print( "New boot loader version available: " .. getVersionString( version ) )
-        else--if cRevision >= rRevision then
-            vcTerminal = cGreen
-        end
-    end
+    vcEEPROM   = versionCompare( "EEPROM"    , EEPROM.Version.full, EEPROM.Version.GetRemoteEEPROM )
+    vcTerminal = versionCompare( "bootloader", Module.Version.full, EEPROM.Version.GetRemoteBootLoader )
     
 end
 
@@ -264,6 +295,7 @@ end
 
 
 function formatNumber( n, leader, decimals, prefixPositive )
+    -- This function may not be very fast, need to revisit it
     local result = string.format( '%' .. ( leader or 0 ) .. '.' .. ( decimals or 0 ) .. 'f', n )
     prefixPositive = prefixPositive or false
     if prefixPositive and n > 0 then
@@ -280,16 +312,16 @@ end
 
 function unitsForItem( item )
     if item.isFluid then
-        return "m³/m"
+        return "m³/m", 4
     end
-    return "p/m"
+    return "p/m", 3
 end
 
 
 function listProxiesAs( label, proxies, panicIfNone, panicIfDifferentTypes )
     if proxies == nil or #proxies == 0 then
         if panicIfNone ~= nil and panicIfNone then
-            computer.panic( "No " .. label .. " detected!" )
+            panic( "No " .. label .. " detected!" )
         end
         print( "WARNING:  No " .. label .. " detected." )
         return
@@ -312,7 +344,7 @@ function listProxiesAs( label, proxies, panicIfNone, panicIfDifferentTypes )
             for _,class in pairs( classes ) do
                 message = message .. "\n\t" .. class
             end
-            computer.panic( message )
+            panic( message )
         end
         
     end
@@ -327,7 +359,7 @@ end
 function listPCIDevicesAs( label, devices, panicIfNone, panicIfDifferentTypes )
     if #devices == 0 then
         if panicIfNone ~= nil and panicIfNone then
-            computer.panic( "No " .. label .. " detected!" )
+            panic( "No " .. label .. " detected!" )
         end
         print( "WARNING:  No " .. label .. " detected." )
         return
@@ -350,7 +382,7 @@ function listPCIDevicesAs( label, devices, panicIfNone, panicIfDifferentTypes )
             for _,class in pairs( classes ) do
                 message = message .. "\n\t" .. class
             end
-            computer.panic( message )
+            panic( message )
         end
         
     end
@@ -378,7 +410,46 @@ end
 
 -- Screens --
 local screens = {}
+local canDraw = false
 
+local ____BootMessage = "Booting Production Terminal"
+local ____BootMessageLen = utf8.len( ____BootMessage )
+function drawBootScreen( gpu, msg, msgLen, extra, extraLen )
+    if not canDraw then return end
+    if msgLen == nil then msgLen = utf8.len( msg ) end
+    
+    local screenWidth, screenHeight = gpu:getSize()
+    
+    gpu:setBackground( 0.0, 0.0, 0.0, 1.0 )
+    gpu:setForeground( 0.0, 0.0, 0.0, 1.0 )
+    gpu:fill( 0, 0, screenWidth, screenHeight, 'X' )
+    
+    local x = round( ( screenWidth - msgLen ) * 0.5 )
+    local y = screenHeight >> 1
+    if extra ~= nil then y = y - 1 end
+    gpu:setForeground( 1.0, 1.0, 1.0, 1.0 )
+    gpu:setText( x, y, msg )
+    
+    if extra ~= nil then
+        y = y + 2
+        local l = extraLen
+        if l == nil then l = utf8.len( extra ) end
+        x = round( ( screenWidth - l ) * 0.5 )
+        gpu:setText( x, y, extra )
+    end
+    
+    gpu:flush()
+    
+    firstDraw = true
+end
+function drawBootScreens( msg, msgLen, extra, extraLen )
+    if not canDraw then return end
+    if msgLen == nil then msgLen = utf8.len( msg ) end
+    for i = 1, #gpus do
+        local gpu = gpus[ i ]
+        drawBootScreen( gpu, msg, msgLen, extra, extraLen )
+    end
+end
 
 function getScreens()
     -- Find all the Screens
@@ -386,22 +457,25 @@ function getScreens()
     listProxiesAs( "Screens", screens )
     
     -- Final test, all Screens require a GPU, make sure we have GPUs to match!
-    if #gpus ~= #screens then
-        computer.panic( "Screens and GPUs mismatch!  There must be one GPU per screen and one Screen per GPU!  I mean, c'mon man?" )
+    canDraw = #gpus == #screens
+    if not canDraw then
+        panic( "Screens and GPUs mismatch!  There must be one GPU per screen and one Screen per GPU!  I mean, c'mon man?" )
     end
     
     -- Now bind the Screens to the GPUs, which doesn't matter, they will all be fed the same data
     if #gpus > 0 then
         for i = 1, #gpus do
+            local gpu = gpus[ i ]
             local screen = screens[ i ]
             local pX, pY = screen:getSize()
-            gpus[ i ]:bindScreen( screen )
-            gpus[ i ]:setSize( pX * screenCCPP, pY * screenCRPP )
+            gpu:bindScreen( screen )
+            gpu:setSize( pX * screenCCPP, pY * screenCRPP )
+            
+            -- Make sure the player isn't left wondering
+            drawBootScreen( gpu, ____BootMessage, ____BootMessageLen, Module.Version.pretty )
         end
-        
-        -- Clear all the screens of any garbage that may be left over
-        screensClear( true )
     end
+    
 end
 
 
@@ -478,132 +552,215 @@ function screensSetBackground( b )
 end
 
 
-function updateScreens()
+local stringLenCache = {}
+local function slC( i, s )
+    local v = stringLenCache[ i ]
+    if v ~= nil then return v end
+    v = utf8.len( s )
+    stringLenCache[ i ] = v
+    return v
+end
+
+local stringTrimCache = {}
+local function stC( i, s, l )
+    local v = stringTrimCache[ i ]
+    if v ~= nil then return v end
+    v = utf8.sub( s, 1, l )
+    stringTrimCache[ i ] = v
+    return v
+end
+
+local usTPretty = Module.Version.pretty
+local usTPrettyX = screenWidth - ( utf8.len( usTPretty ) + 1 )
+local prodOverallTitleX = round( ( screenWidth - ( utf8.len( prodOverallTitle ) + 1 ) ) / 2 )
+local storOverallTitleX = round( ( screenWidth - ( utf8.len( storOverallTitle ) + 1 ) ) / 2 )
+function updateScreens( fulldraw )
     if #gpus == 0 then return end
+    local start = computer.millis()
     
+    fulldraw = fulldraw or false
     local x = 0
     local y = 0
     
     -- Erase everything
-    screensClear( false )
+    if fulldraw then
+        screensClear( false )
+    end
     
-    
-    local screenWidth = panelsWide * screenCCPP
     
     -- Draw Top Bar Title
-    screensFill( 0, 0, screenWidth, 1, ' ', cWhite, cTitle )
-    screensSetText( 1, 0, getStatusString() )
-    x = formatNumber( ( screenWidth - #mainTitle ) / 2 )
-    screensSetText( x, 0, mainTitle )
-    x = formatNumber( screenWidth - #versionString - 1 )
-    screensSetText( x, 0, versionString, vcTerminal )
+    if fulldraw then
+        screensFill( 0, 0, screenWidth, 1, ' ', cWhite, cTitle )
+        screensSetText( mainTitleX, 0, mainTitle )
+        screensSetText( 1, 0, getStatusString() )
+        screensSetText( usTPrettyX, 0, usTPretty, vcTerminal )
+    else
+        screensSetText( 1, 0, getStatusString(), cWhite, cTitle )
+        screensSetText( usTPrettyX, 0, usTPretty, vcTerminal )
+    end
     y = y + 1
     
     -- Data to record for overall machine data
-    local totalRate = 0
+    local totalProd = 0
     local totalPower = 0
     
-    -- Go through and draw each MachineData
+    -- Go through and draw each MachineDatum
     
-    MachineData.Collimator:drawHeaders( 1, y )
+    if fulldraw then
+        machineCollimator:drawHeaders( 0, y )
+    end
     y = y + 1
     
-    for _, data in pairs( machineData ) do
-        MachineData.Collimator:drawTable( 1, y, data )
-        totalRate  = totalRate  + data.rate
-        totalPower = totalPower + data.power
+    for _, data in pairs( machineDatum ) do
+        --computer.skip()
+        machineCollimator:drawTable( 0, y, data )
+        totalProd  = totalProd  + data.productivity
+        totalPower = totalPower + data.currentPowerConsumption
         y = y + 1
     end
+    computer.skip()
     
     -- Draw Overall Production Title
     y = y + 1
-    screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
-    x = formatNumber( ( screenWidth - #prodOverallTitle ) / 2 )
-    screensSetText( x, y, prodOverallTitle )
+    if fulldraw then
+        screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
+        screensSetText( prodOverallTitleX, y, prodOverallTitle )
+    else
+        screensSetForeground( cWhite )
+    end
     y = y + 1
     
     
     -- Show how quickly all the machines are eating the inputs
-    y = drawCycleData( y, "Input:", inputCycle )
+    y = drawCycleData( y, "Input:", inputCycle, fulldraw )
     
     -- Show how slowly all the machines are creating the outputs
-    y = drawCycleData( y, "Output:", outputCycle )
+    y = drawCycleData( y, "Output:", outputCycle, fulldraw )
     
     
-    -- Show the average production rate
-    totalRate = totalRate / #machines
-    screensSetText( 1, y, "Average Rate: " .. formatNumber( totalRate * 100, 3, 1 ) .. "%" )
+    -- Show the average production productivity
+    totalProd = totalProd / #machineDatum
+    screensSetText( 0, y, string.format( "Productivity: %3.1f%%", totalProd * 100.0 ) )
     y = y + 1
     
     -- Show the overall power consumption
-    screensSetText( 1, y, "Total Power: " .. formatNumber( totalPower, 0, 1 ) .. " MW" )
+    screensSetText( 0, y, string.format( "Power: %1.1f MW", totalPower ) )
     
     
     -- Draw Storage Title
     y = y + 2
-    screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
-    x = formatNumber( ( screenWidth - #storOverallTitle ) / 2 )
-    screensSetText( x, y, storOverallTitle )
-    
-    -- Go through each Storage, draw it's current, max as well as a neat little bar graph
-    for _, data in pairs( storageData ) do
-        y = y + 1
-        drawStorageLine( y, data.name, data.current, data.max, screenWidth )
+    if fulldraw then
+        screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
+        screensSetText( storOverallTitleX, y, storOverallTitle )
     end
     
-    -- Draw a storage line for the total storage
-    y = y + 2
-    drawStorageLine( y, "All Storage:", storageCurrent, storageMax, screenWidth )
-    y = y + 1
-    drawStorageLine( y, "Thresholds:", thresholdLow, thresholdHigh, screenWidth, storageMax )
-    y = y + 1
-    drawThroughput( y, 19, 5, 2 )
+    -- Go through each Storage Array and draw it's details
+    for _, sa in pairs( storageArrays ) do
+        
+        y = y + 1
+        screensSetText( 0, y, sa.name, cWhite, cBlack )
+        
+        -- Go through each Storage container in the array, draw it's current, max as well as a neat little bar graph
+        for idx = 1, sa.count do
+            computer.skip()
+            y = y + 1
+            local name, current, max = sa:storeUsefulData( idx )
+            drawStorageLine( y, name, current, max, fulldraw, screenWidth )
+        end
+        
+        -- Draw a storage line for the total storage
+        y = y + 2
+        drawStorageLine( y, "Total:", sa.current, sa.max, fulldraw, screenWidth )
+        y = y + 1
+        drawStorageLine( y, "Thresholds:", sa.thresholdLow, sa.thresholdHigh, fulldraw or thresholdChanged, screenWidth, sa.max )
+        y = y + 1
+        drawThroughput( y, sa.rate, sa.units, sa.unitsLen, 21, 5, 2 )
+        
+        y = y + 1
+    end
     
-    -- Very bottom row of each screen, draw the the EEPROM version
-    drawEEPROMVersion()
+    -- Very bottom row of each screen, draw the the EEPROM version and total draw time
+    local finish = computer.millis()
+    local delta = finish - start
+    if delta < 0 then
+        -- Does the player have Just Pause installed?  FIN doesn't tick while the
+        -- game is paused but the clock it uses does so timers can be thrown off
+        -- reset all timers
+        local pre = string.format( "\n\t\tstart = %d\n\t\tfinish = %d\n\t\tdelta = %d\n\t\tnextSignUpdate = %d\n\t\tnextVersionCheck = %d\n\t\tnextCycleUpdate = %d\n\t\tthroughput.lastTimestamp = %d",
+            start, finish, delta,
+            nextSignUpdate, nextVersionCheck, nextCycleUpdate, throughput.lastTimestamp )
+        
+        local newTimestamp = computer.millis()
+        nextSignUpdate = newTimestamp + signUpdateMS
+        nextVersionCheck = newTimestamp + softwareUpdateMS
+        nextCycleUpdate = newTimestamp + cycleUpdateMS
+        initThroughput()
+        
+        local post = string.format( "\n\t\tnewTimestamp = %d\n\t\tnextSignUpdate = %d (+ %d ms)\n\t\tnextVersionCheck = %d (+ %d ms)\n\t\tnextCycleUpdate = %d (+ %d ms)\n\t\tthroughput.lastTimestamp = %d",
+            newTimestamp,
+            nextSignUpdate, signUpdateMS,
+            nextVersionCheck, softwareUpdateMS,
+            nextCycleUpdate, cycleUpdateMS,
+            throughput.lastTimestamp )
+        
+        print( string.format( "Had to correct derpy timer, updateScreen() draw delta was less than 0 ms!\n\tBefore:%s\n\tAfter:%s", pre, post ) )
+        
+        drawScreenFooter( string.format( "%9d | strange timers", newTimestamp ), fulldraw )
+    else
+        drawScreenFooter( string.format( "%9d | %5d ms | %5d ms", finish, signUpdateMS, delta ), fulldraw )
+        -- If it takes a long time to draw the screen, spread out how often we do it,
+        -- also speed it back up if it starts taking less time
+        if delta > ( signUpdateMS * 0.25 ) then signUpdateMS = round( signUpdateMS * 1.25 )
+        elseif delta < ( signUpdateMS * 0.10 ) then signUpdateMS = round( signUpdateMS * 0.9 ) end
+        if signUpdateMS < 250 then signUpdateMS = 250 end
+        if signUpdateMS > 2500 and signUpdateMS > delta then signUpdateMS = 2500 end
+    end
     
     -- Commit all GPU buffers to their Screens
     screensCommit()
+    
+    thresholdChanged = false -- No longer dirty
 end
 
-function drawEEPROMVersion()
-    
-    local t = nil
-    if ____EEPROM_VERSION == nil then
-        t = 'Unknown EEPROM'
-    else
-        t = 'EEPROM ' .. ____EEPROM_VERSION
-    end
-    local w = #t + 1
+local devPretty = "EEPROM " .. EEPROM.Version.pretty
+local devPrettyL = slC( 10, devPretty ) + 1
+function drawScreenFooter( drawtime, fulldraw )
     
     for _, gpu in pairs( gpus ) do
         local screenWidth, screenHeight = gpu:getSize()
         local y = screenHeight - 1
-        local x = screenWidth - w
+        local x = screenWidth - devPrettyL
+        
+        gpu:setBackground( cTitle.r, cTitle.g, cTitle.b, cTitle.a )
+        if fulldraw then
+            gpu:fill( 0, y, screenWidth, 1, ' ' )
+        end
+        
+        if drawtime ~= nil then
+            gpu:setForeground( cWhite.r, cWhite.g, cWhite.b, cWhite.a )
+            gpu:setText( 1, y, drawtime )
+        end
         
         gpu:setForeground( vcEEPROM.r, vcEEPROM.g, vcEEPROM.b, vcEEPROM.a )
-        gpu:setBackground( cTitle.r, cTitle.g, cTitle.b, cTitle.a )
-        gpu:fill( 0, y, screenWidth, 1, ' ' )
-        gpu:setText( x, y, t )
+        gpu:setText( x, y, devPretty )
     end
     
+    --print( drawtime )
 end
 
-function drawCycleData( y, label, dataCycle )
+function drawCycleData( y, label, dataCycle, fulldraw )
     if dataCycle == nil or #dataCycle == 0 then return y end
-    screensSetText( 1, y, label, nil, cBlack )
+    if fulldraw then
+        screensSetText( 0, y, label, nil, cBlack )
+    end
     y = y + 1
     for _, datum in pairs( dataCycle ) do
         
-        local t = "+ " .. datum.name
-        local ipm = formatNumber( datum.amount, 0, 2 )
-        local tpm = formatNumber( datum.total, 0, 2 )
-        
-        local pmt = ipm .. '/' .. tpm .. datum.units
-        local fill = 49 - utf8.len( t ) - utf8.len( pmt )
-        t = t .. string.rep( ' ', fill ) .. pmt
-        
+        local t = string.format( '+ %s', datum.name )
         screensSetText( 1, y, t )
+        
+        local t = string.format( '%9.2f/%9.2f %s/m', datum.amount, datum.total, datum.units )
+        screensSetText( 21, y, t )
         y = y + 1
     end
     return y + 1
@@ -626,36 +783,41 @@ function getFillBar( value, max, maxChars )
     return result .. string.rep( " ", maxChars - b )
 end
 
-function drawStorageLine( y, name, current, max, ... )
+function drawStorageLine( y, name, current, max, fulldraw, ... )
     local varargs = { ... }
-    local nmax = 19
-    local lname = utf8.len( name )
+    local nmax = math.floor( screenWidth * 0.5 ) - 13
+    local lname = slC( 200 + y, name )
     if lname > nmax then
-        name = utf8.sub( name, 1, nmax )
+        --name = utf8.sub( name, 1, nmax )
+        name = stC( 200 + y, name, nmax )
     else
         name = name .. string.rep( ' ', nmax - lname )
     end
     
+    if fulldraw then
+        for _, gpu in pairs( gpus ) do
+            local wid, hei = gpu:getSize()
+            local t = string.rep( ' ', wid )
+            gpu:setForeground( 0.0, 0.0, 0.0, 1.0 )
+            gpu:setBackground( 0.0, 0.0, 0.0, 1.0 )
+            gpu:setText( 0, y, t )
+        end
+    end
     
     -- Draw the status
-    local t = string.format( "%s %s/%s", name, formatNumber( current, 5 ), formatNumber( max, 5 ) )
+    local t = string.format( "%s %5.0f/%5.0f", name, current, max )
     screensSetText( 1, y, t, cWhite, cBlack )
     
     -- Common fill bar stuff
-    local lenT = #t
+    local barX = math.floor( screenWidth * 0.5 ) + 1
     
     if #varargs == 1 and type( varargs[ 1 ] ) == "number" then
         -- Draw the fill bar
         local screenWidth = varargs[ 1 ]
-        local full = screenWidth - ( lenT + 3 )
-        
-        --local percent = current / max
-        --local fill = round( full * percent )
-        --print( screenWidth, full, fill, current, max, percent )
-        --t = string.rep( '█', fill ) .. string.rep( ' ', full - fill )
+        local full = screenWidth - ( barX + 1 )
         
         local t = getFillBar( current, max, full )
-        screensSetText( lenT + 2, y, t, cGreen, cRed )
+        screensSetText( barX, y, t, cGreen, cRed )
     end
     
     if #varargs == 2 and type( varargs[ 1 ] ) == "number" and type( varargs[ 2 ] ) == "number" then
@@ -663,30 +825,29 @@ function drawStorageLine( y, name, current, max, ... )
         local screenWidth = varargs[ 1 ]
         local sMax = varargs[ 2 ]
         
-        local full = screenWidth - ( lenT + 3 )
+        local full = screenWidth - ( barX + 2 )
         local low = current / sMax
-        local col = lenT + 1 + round( full * low )
+        local col = barX + round( full * low )
         screensSetText( col, y, '^', cRed )
-        --print( col )
         
         local high = max / sMax
-        col = lenT + 1 + round( full * high )
+        col = barX + round( full * high )
         screensSetText( col, y, '^', cGreen )
-        --print( col )
     end
 end
 
-function drawThroughput( y, colX, colL, colD )
-    local t = "Net Flow:"
+local dtpNetFlow = "Net Flow:"
+local dtpNewFlowLen = slC( 75, dtpNetFlow )
+function drawThroughput( y, rate, units, unitsLen, colX, colL, colD )
     local colW = 1 + colX + colL + colD
-    t = t .. string.rep( ' ', colW - #t ) .. ' ' .. primaryUnits
+    local t = string.format( "%s%s %s/m", dtpNetFlow, string.rep( ' ', colW - dtpNewFlowLen ), units )
     screensSetText( 1, y, t, cWhite )
     
-    t = formatNumber( throughput.rate, colL, colD, true )
+    t = formatNumber( rate, colL, colD, true )
     local c = cWhite
-    if throughput.rate < 0.0 then
+    if rate < 0.0 then
         c = cRed
-    elseif throughput.rate > 0.0 then
+    elseif rate > 0.0 then
         c = cGreen
     end
     screensSetText( 1 + colW - #t, y, t, c )
@@ -695,8 +856,26 @@ end
 
 
 
+-- Terminal panic --
+
+function panic( msg, len, extra, extraLen )
+    
+    if canDraw then
+        drawBootScreens( "TERMINAL PANIC", 14, msg, len )
+    end
+    
+    local t = msg
+    if extra ~= nil then t = t .. '\n' .. extra end
+    
+    computer.panic( debug.traceback( t, 2 ) )
+    
+end
+
+
+
+
 -- CircuitSwitch --
-local switch = nil
+switch = nil
 
 
 function getSwitch()
@@ -704,7 +883,7 @@ function getSwitch()
     local switches = component.getComponentsByClass( ClassGroup.CircuitSwitches.All )
     listProxiesAs( "Switches", switches, true )
     if #switches > 1 then
-        computer.panic( "More than one Switch detected!  There should be EXACTLY one!" )
+        panic( "More than one Switch detected!  There should be EXACTLY one!" )
     end
     -- Pull the first (and only) switch from the array
     switch = switches[ 1 ]
@@ -712,86 +891,43 @@ end
 
 function updateSwitch()
     -- Only flip the switch if there is a switch to flip
-    if switch == nil then
-        return
+    if switch ~= nil then
+        switch.isSwitchOn = onState
     end
-    switch.isSwitchOn = onState
-end
-
-
-
-
--- Item Datums --
-function createItemDatumFromItem( item )
-    local result = {}
-    result.name = item.type.name
-    result.isFluid = item.type.form == 2
-    
-    result.stackSize = item.type.max
-    if item[ "amount" ] ~= nil then
-        result.amount = item.amount
-        if result.isFluid then
-            result.amount = result.amount / 1000
-        end
-    else
-        result.amount = 1
+    if userUIOSystemOnOff ~= nil then
+        userUIOSystemOnOff:setState( onState )
     end
-    
-    return result
-end
-
-function getItemDatumsFromItemAmounts( items )
-    
-    local results = {}
-    
-    for i, item in ipairs( items ) do
-        results[ i ] = createItemDatumFromItem( item )
-    end
-    
-    return results
-end
-
-
-function createPowerShardSlotReference()
-    local shard = { amount = 1, type = findItem( "Power Shard" ) }
-    local results = {
-        createItemDatumFromItem( shard ),
-        createItemDatumFromItem( shard ),
-        createItemDatumFromItem( shard ),
-    }
-    -- Overide the stack size for the power shard slots
-    for _, slot in pairs( results ) do
-        slot.stackSize = 1
-    end
-    
-    return results
 end
 
 
 
 
 -- Machines --
-MT_INVALID = 0
-MT_Manufacturer = 1
-MT_Extractor = 2
-
-machineType = MT_INVALID
-machines = {}
-machineProgress = {}
+machineCollimator = nil
+machineType = MachineDatum.MT_INVALID
+machineDatum = {}
 
 
 function getMachines()
     -- Find all the machines
-    machines = component.getComponentsByClass( { ClassGroup.ProductionMachines.Manufacturer, ClassGroup.ProductionMachines.FGBuildableResourceExtractorBase } )
+    local machines = component.getComponentsByClass( { ClassGroup.ProductionMachines.Manufacturer, ClassGroup.ProductionMachines.FGBuildableResourceExtractorBase } )
     listProxiesAs( "Machines", machines, true, true )
+    
+    for idx, machine in pairs( machines ) do
+        machineDatum[ idx ] = MachineDatum.new( machine )
+    end
+    
+    -- They will all be the same, get the type from the first one
+    machineType = machineDatum[ 1 ].mt
 end
 
 
-function listenToAllFactoryConnectorsByDirection( actors, direction, onlyConnected )
+function listenToAllMachineDatumFactoryConnectorsByDirection( direction, onlyConnected )
     if onlyConnected == nil or type( onlyConnected ) ~= "boolean" then onlyConnected = true end
     local count = 0
-    for _, actor in pairs( actors ) do
+    for _, md in pairs( machineDatum ) do
         
+        local actor = md.machine
         local connectors = actor:getFactoryConnectors()
         for _, connector in pairs( connectors ) do
             if connector.direction == direction then
@@ -806,11 +942,12 @@ function listenToAllFactoryConnectorsByDirection( actors, direction, onlyConnect
     return count
 end
 
-function ignoreAllFactoryConnectorsByDirection( actors, direction, onlyConnected )
+function ignoreAllMachineDatumFactoryConnectorsByDirection( direction, onlyConnected )
     if onlyConnected == nil or type( onlyConnected ) ~= "boolean" then onlyConnected = false end
     local count = 0
-    for _, actor in pairs( actors ) do
+    for _, md in pairs( machineDatum ) do
         
+        local actor = md.machine
         local connectors = actor:getFactoryConnectors()
         for _, connector in pairs( connectors ) do
             if connector.direction == direction then
@@ -836,11 +973,11 @@ function handleItemTransfer( edata )
 end
 
 function getMachineOutputItem()
-    for _, machine in pairs( machines ) do
+    for _, datum in pairs( machineDatum ) do
+        local machine = datum.machine
+        local inv = component.getInventoryByName( machine, component.INV_OUTPUT )
         
-        local inv = machine:getInventories()[ 1 ]   -- Extractors inventory 1 is their output
-        
-        local stack = inv:getStack( 0 )             -- Get the primary output
+        local stack = inv:getStack( 0 )             -- Get the output
         if stack.item ~= nil and stack.item.type ~= nil then
             return machine, stack.item
         end
@@ -849,37 +986,33 @@ function getMachineOutputItem()
 end
 
 function findMachineWithRecipeOrExtractedItem()
-    if #machines == 0 then
+    if #machineDatum == 0 then
         return nil
-    end
-    
-    local m = machines[ 1 ]
-    if m[ "getRecipe" ] == nil then
-        machineType = MT_Extractor
-        print( "Machine Type: Extractor")
-    else
-        machineType = MT_Manufacturer
-        print( "Machine Type: Manufacturer")
     end
     
     local rachine = nil
     local recit = nil
     
-    if machineType == MT_Manufacturer then
-        for _, machine in pairs( machines ) do
+    if machineType == MachineDatum.MT_MANUFACTURER then
+        print( "Machine Type: Manufacturer")
+        
+        for _, md in pairs( machineDatum ) do
+            local machine = md.machine
             local recipe = machine:getRecipe()
             if recipe ~= nil then
                 print( "Manufacturer: Got recipe by machine" )
-                rachine = machine
-                recit = recipe
-                break
+                return machine, recipe
             end
         end
-    end
-    
-    if machineType == MT_Extractor then
+        
+        panic( "No machine with a recipe set (yet)" )
+        
+    elseif machineType == MachineDatum.MT_EXTRACTOR then
+        print( "Machine Type: Extractor")
+        
         -- Need something to be output by the extractor to it's output
         -- inventory or connector to determine what it extracts
+        print( "\nPriming extractors to determine extracted resource.\nPlease wait up to 30 seconds before resetting or turning off the computer as it may take time for the extractors to start up.\n" )
         
         -- See if any machine has an item in an output inventory
         rachine, recit = getMachineOutputItem()
@@ -887,12 +1020,13 @@ function findMachineWithRecipeOrExtractedItem()
             print( "Extractor: Got item by initial output scan" )
         else
             -- Listen to (connected) output connectors (if any) as the item may be removed from the inventory before this script catches it
-            if listenToAllFactoryConnectorsByDirection( machines, 1 ) > 0 then-- Output connector
+            if listenToAllMachineDatumFactoryConnectorsByDirection( 1 ) > 0 then-- Output connector
                 
                 event.clear()
                 switch.isSwitchOn = true
                 
-                local edata = { event.pull( 10.0 ) }    -- Wait for an event, but timeout after 10s
+                print( "10s wait for primary output event..." )
+                local edata = { event.pull( 10.0 ) }            -- Wait for an event, but timeout after 10s
                 
                 rachine, recit = handleItemTransfer( edata )
                 if rachine ~= nil and recit ~= nil then
@@ -903,19 +1037,20 @@ function findMachineWithRecipeOrExtractedItem()
         
         if rachine == nil or recit == nil then
             -- Poop, no event (yet) or no connected connectors, turn machines on and hammer the scanner
+            print( "20s wait for secondary output event..." )
             switch.isSwitchOn = true                                    -- Pump it!
-            local timeout = computer.millis() + 10000                   -- 10s timeout on hardcore scanner
+            local timeout = computer.millis() + 20000                   -- 20s timeout on hardcore scanner
             while computer.millis() < timeout do
                 
-                local edata = { event.pull( 0 ) }               -- GO HARD!
+                local edata = { event.pull( 0 ) }              -- GO HARD!
                 
-                rachine, recit = handleItemTransfer( edata )       -- Try an catch an event first
+                rachine, recit = handleItemTransfer( edata )     -- Try an catch an event first
                 if rachine ~= nil and recit ~= nil then
                     print( "Extractor: Got item by secondary event" )
                     break
                 end
                 
-                rachine, recit = getMachineOutputItem()                  -- Output scanner fallback
+                rachine, recit = getMachineOutputItem()                 -- Output scanner fallback
                 if rachine ~= nil and recit ~= nil then
                     print( "Extractor: Got item by output inventory" )
                     break
@@ -924,7 +1059,15 @@ function findMachineWithRecipeOrExtractedItem()
         end
         
         switch.isSwitchOn = false
-        ignoreAllFactoryConnectorsByDirection( machines, 1 )
+        ignoreAllMachineDatumFactoryConnectorsByDirection( 1 )
+        
+        if rachine == nil then
+            panic( "Could not prime extractor to get produced item" )
+        end
+        
+    else
+        panic( "Machine is wrong type" )
+        
     end
     
     return rachine, recit
@@ -934,246 +1077,23 @@ end
 
 
 -- Production Cycle Data --
-machineData = {}
-MachineData = {}
-MachineData.__index = MachineData
-
-local INV_SHARD_SLOTS = createPowerShardSlotReference()
-local INV_SHARD_UNUSED = { r = 0.5, g = 0.5, b = 0.5, a = 1.0 }
-
-
-local function MD_Collimate_Cycle( md )
-    local t = formatNumber( md.progress * 100.0, 3, 0 ) .. '%'
-    return t, cWhite, cBlack
-end
-
-local function MD_Collimate_Rate( md )
-    local t = formatNumber( md.rate * 100.0, 3, 0 ) .. '%'
-    return t, cWhite, cBlack
-end
-
-local function MD_Collimate_Output( md )
-    local ot, oc = md:getInventoryStatus( INV_OUTPUT, 0 )
-    local output = primary.amount * ( 60 / md.cycleTime ) * md.rate
-    local t = {
-        formatNumber( output, 9, 2 ), primaryUnits, ot
-    }
-    local c = { cWhite, cWhite, oc }
-    return t, c, cBlack
-end
-
-local function MD_Collimate_Potential( md )
-    local t = { formatNumber( md.potential * 100.0, 3, 0 ) .. '% ' }
-    local c = { cWhite }
-    
-    local refItems = INV_SHARD_SLOTS
-    for idx, item in pairs( refItems ) do
-        local it, ic = md:getInventoryStatus( INV_SHARD, idx - 1 ) -- refItems is 1, ...; getStack() is 0, ...
-        if it ~= nil and ic ~= nil then
-            t[ #t + 1 ] = it
-            c[ #c + 1 ] = ic
-        end
-    end
-    
-    return t, c, cBlack
-end
-
-local function MD_Collimate_Inputs( md )
-    local refItems = inputItems
-    if refItems == nil or #refItems == 0 then return '', cWhite, cBlack end
-    
-    local t = {}
-    local c = {}
-    
-    for idx, item in pairs( refItems ) do
-        local it, ic = md:getInventoryStatus( INV_INPUT, idx - 1 ) -- refItems is 1, ...; getStack() is 0, ...
-        if it ~= nil and ic ~= nil then
-            t[ #t + 1 ] = it
-            c[ #c + 1 ] = ic
-        end
-    end
-    
-    return t, c, cBlack
-end
-
-local nextPowerStatusChar = 1
-local function MD_Collimate_Power( md )
-    local t = PWR_STATUS_OFF
-    local c = cRed
-    if md.power > 0 then
-        local npsc = nextPowerStatusChar
-        t = PWR_STATUS_ON[ npsc ]
-        npsc = npsc + 1
-        if npsc > #PWR_STATUS_ON then npsc = 1 end
-        nextPowerStatusChar = npsc
-        c = cGreen
-    end
-    return ' ' .. t, c, cBlack
-end
-
-local function createMachineDataCollimator()
-    local Column = Collimator.Column
-    
-    local c = {}
-    c[ #c + 1 ] = Column.new( { header = 'Cycle'      , width =  5, resolver = MD_Collimate_Cycle     } )
-    c[ #c + 1 ] = Column.new( { header = 'Rate'       , width =  5, resolver = MD_Collimate_Rate      } )
-    c[ #c + 1 ] = Column.new( { header = 'Potential'  , width =  9, resolver = MD_Collimate_Potential, sep = '' } )
-    c[ #c + 1 ] = Column.new( { header = 'Output'     , width = 16, resolver = MD_Collimate_Output    } )
-    if machineType == MT_Manufacturer then
-        c[ #c + 1 ] = Column.new( { header = 'Inputs' , width =  6, resolver = MD_Collimate_Inputs   , sep = '' } )
-    end
-    c[ #c + 1 ] = Column.new( { header = 'Pwr'        , width =  3, resolver = MD_Collimate_Power     } )
-    
-    local result, reason = Collimator.new( {
-        columns     = c,
-        padding     = 1,
-        drawText    = screensSetText,
-    })
-    if result == nil then
-        computer.panic( reason )
-    end
-    return result
-end
-MachineData.Collimator = nil
-
-
-
-function MachineData.tostring()
-    return MachineData.Collimator:headersToString()
-end
-
-function initMachineData()
-    local function createMachineData( machine )
-        local result = {}
-        result.machine = machine
-        result.lastProgress = machine.progress
-        setmetatable( result, MachineData )
-        result:update()
-        return result
-    end
-    
-    for _, machine in pairs( machines ) do
-        machineData[ machine.hash ] = createMachineData( machine )
-    end
-    
-end
-
-function MachineData:update()
-    local machine = self.machine
-    self.potential = machine.potential
-    self.progress = machine.progress
-    self.rate = machine.productivity
-    self.cycleTime = machine.cycleTime
-    self.power = machine.powerConsumProducing or 0
-    if machine.standby or self.lastProgress == self.progress then
-        self.power = 0
-    end
-    self.lastProgress = self.progress
-end
-
-function MachineData:toString()
-    return MachineData.Collimator:tableToString( self )
-end
-
-function MachineData:getInventoryStatus( inventory, stack )
-    if inventory == nil or type( inventory ) ~= "string" or inventory == '' then
-        computer.panic( debug.traceback( "bad inventory", 2 ) )
-        return nil, nil end
-    if stack == nil or type( stack ) ~= "number" or stack < 0 then
-        computer.panic( debug.traceback( "bad stack", 2 ) )
-        return nil, nil end
-    
-    local refItems = nil
-    if inventory == INV_INPUT then
-        refItems = inputItems
-    elseif inventory == INV_OUTPUT then
-        refItems = outputItems
-    elseif inventory == INV_SHARD then
-        refItems = INV_SHARD_SLOTS
-    else
-        computer.panic( debug.traceback( "really bad inventory", 2 ) )
-        return nil, nil
-    end
-    
-    if refItems ~= nil and stack >= #refItems then
-        computer.panic( debug.traceback( "refItems", 2 ) )
-        return nil, nil end
-    
-    local machine = self.machine
-    local inv = getInventoryByName( machine, inventory )
-    if inv == nil then
-        computer.panic( debug.traceback( "can't get inventory", 2 ) )
-        return nil, nil end
-    local stk = inv:getStack( stack )
-    if stk == nil then
-        computer.panic( debug.traceback( "get get stack", 2 ) )
-        return nil, nil end
-    
-    local refItem = refItems[ 1 + stack ] -- refItems is 1, ...; getStack() is 0, ...
-    local refAmount = refItem.amount
-    local dblAmount = refAmount * 2
-    local stkCount = stk.count
-    
-    if inventory == INV_INPUT then
-        
-        if stkCount < refAmount then
-            return INV_STATUS[ 1 ], cRed
-        elseif stkCount < dblAmount then
-            return INV_STATUS[ 2 ], cYellow
-        end
-        return INV_STATUS[ 3 ], cGreen
-        
-    elseif inventory == INV_OUTPUT then
-        
-        local sMax = refItem.stackSize
-        dblAmount = sMax - refAmount * 2
-        if dblAmount < 0 then dblAmount = 0 end
-        refAmount = sMax - refAmount
-        if refAmount < 0 then refAmount = 0 end
-        
-        if stkCount > refAmount then
-            return INV_STATUS[ 3 ], cRed
-        elseif stkCount > dblAmount then
-            return INV_STATUS[ 2 ], cYellow
-        end
-        return INV_STATUS[ 1 ], cGreen
-        
-    elseif inventory == INV_SHARD then
-        
-        local potential = self.potential
-        
-        local char = INV_STATUS[ 1 ] -- empty
-        if stkCount > 0 then char = INV_STATUS[ 3 ] end -- full
-        
-        local col = INV_SHARD_UNUSED
-        -- Color depends on whether it's required
-        if( stack == 0 and potential > 1.0 )
-        or( stack == 1 and potential > 1.5 )
-        or( stack == 2 and potential > 2.0 )then
-            col = cGreen
-        end
-        
-        return char, col
-    end
-    
-    computer.panic( debug.traceback( "wtf?", 2 ) )
-    return nil, nil
-end
-
-
-
-
 inputCycle = {}
 outputCycle = {}
 
 function updateCycleData()
     local function resetCycleData()
         local function resetCycleData( data, items )
+            if items == nil then return end
             for idx, item in pairs( items ) do
                 
                 local datum = data[ idx ]
                 if datum == nil then
-                    datum = { name = item.name, units = unitsForItem( item ) }
+                    datum = {
+                        name = item.name,
+                        nameLen = item.nameLen,
+                        units = item.units,
+                        unitsLen = item.unitsLen
+                    }
                     data[ idx ] = datum
                 end
                 
@@ -1186,35 +1106,26 @@ function updateCycleData()
         resetCycleData( outputCycle, outputItems )
     end
     
-    local function updateCycleData( data, items, cycleTime, rate )
+    local function updateCycleData( data, items, cycleTime, prod )
         for idx, item in pairs( items ) do
             
             local datum = data[ idx ]
-            if datum == nil then
-                datum = {
-                    name = item.name,
-                    amount = 0,
-                    total = 0,
-                }
-                data[ idx ] = datum
-            end
-            
-            local t = item.amount * ( 60 / cycleTime )
-            datum.total = datum.total + t
-            datum.amount = datum.amount + t * rate
+            local value = item.amount * ( 60 / cycleTime )
+            datum.total = datum.total + value
+            datum.amount = datum.amount + value * prod
             
         end
     end
     
     resetCycleData()
     
-    for _, data in pairs( machineData ) do
+    for _, data in pairs( machineDatum ) do
         data:update()
         if inputItems ~= nil and #inputItems > 0 then
-            updateCycleData( inputCycle, inputItems, data.cycleTime, data.rate )
+            updateCycleData( inputCycle, inputItems, data.cycleTime, data.productivity )
         end
         if outputItems ~= nil and #outputItems > 0 then
-            updateCycleData( outputCycle, outputItems, data.cycleTime, data.rate )
+            updateCycleData( outputCycle, outputItems, data.cycleTime, data.productivity )
         end
     end
 end
@@ -1224,61 +1135,47 @@ end
 
 -- Recipe and Main Product --
 mainTitle = ''
+mainTitleX = nil
 recipe = nil
+baseProductionTime = nil
 inputItems = nil
 outputItems = nil
-primary = nil
-primaryUnits = nil
 
 
 function getRecipeAndProduct()
     
     -- Find a machine with a recipe
     local machine, recit = findMachineWithRecipeOrExtractedItem()
-    if machine == nil then
-        if machineType == MT_Manufacturer then
-            computer.panic( "No machine with a recipe set (yet)" )
-        elseif machineType == MT_Extractor then
-            computer.panic( "Could not prime extractor to get produced item" )
-        else
-            computer.panic( "What the hell are these machines?  machineType is invalid" )
-        end
-        return
-    end
     
-    if machineType == MT_Manufacturer then
+    if machineType == MachineDatum.MT_MANUFACTURER then
         -- Get the recipe and main primary
         recipe      = machine:getRecipe()
-        mainTitle  = recipe.name
+        baseProductionTime  = recipe.duration
+        mainTitle   = recipe.name
         print( "Recipe: " .. mainTitle )
         
-        inputItems  = getItemDatumsFromItemAmounts( recipe:getIngredients() )
-        outputItems = getItemDatumsFromItemAmounts( recipe:getProducts() )
-        primary     = outputItems[ 1 ]
-        if primary == nil then
-            computer.panic( "Unable to get products of recipe!" )
+        inputItems  = ItemDatum.FromItemAmounts( recipe:getIngredients() )
+        outputItems = ItemDatum.FromItemAmounts( recipe:getProducts() )
+        
+        -- Program all other machines with the same recipe
+        if programAllMachines then
+            for _, md in pairs( machineDatum ) do
+                md.machine:setRecipe( recipe )
+            end
         end
-    end
-    
-    if machineType == MT_Extractor then
-        inputItems  = {}
-        local prod  = createItemDatumFromItem( recit )
+        
+    elseif machineType == MachineDatum.MT_EXTRACTOR then
+        inputItems  = nil
+        local prod, reason  = ItemDatum.new( recit, 1 )
+        if prod == nil then panic( reason ) end
+        
         outputItems = { prod }
-        primary     = prod
-        mainTitle  = prod.name -- So we have something in the top title bar
+        mainTitle   = prod.name -- So we have something in the top title bar
+        baseProductionTime  = machine.cycleTime * machine.potential
+        
     end
     
-    primaryUnits = unitsForItem( primary )
-    
-    print( "Primary: " .. primary.name )
-    print( " isFluid: " .. tostring( primary.isFluid ) )
-    
-    -- Program all other machines with the same recipe
-    if machineType == MT_Manufacturer and programAllMachines then
-        for _, machine in pairs( machines ) do
-            machine:setRecipe( recipe )
-        end
-    end
+    mainTitleX = round( ( screenWidth - utf8.len( mainTitle ) ) / 2 )
     
 end
 
@@ -1286,90 +1183,73 @@ end
 
 
 -- Storage --
-storageMax = 0
-storageCurrent = 0
-
-storageData = {}
-StorageData = {
-    storage = nil,
-    name = '',
-    current = 0,
-    max = 0,
-}
-StorageData.__index = StorageData
-
-function StorageData:update()
-    local storage = self.storage
-    local current = 0
-    if primary.isFluid then
-        current = storage.fluidContent
-    else
-        local inv = getInventoryByName( storage, INV_STORAGE )
-        current = inv.itemCount
-    end
-    self.current = current
-    return current, self.max
-end
-
+storageArrays = nil
+storageState = nil
 
 function getStorage()
-    if primary == nil then
+    if outputItems == nil then
         return
     end
     
-    local stores = nil
-    if primary.isFluid then
-        stores = component.getComponentsByClass( FluidStorage.All )
-    else
-        stores = component.getComponentsByClass( SolidStorage.All )
-    end
+    storageArrays = {}
     
-    listProxiesAs( "Storage", stores, true )
-    
-    storageMax = 0
-    storageCurrent = 0
-    
-    local function createStorageData( storage )
-        local result = {}
-        result.storage = storage
-        local name = storage.nick
-        if name == nil or name == '' then
-            name = storage.id
-        end
-        result.name = name
-        local max = 0
-        if primary.isFluid then
-            max =  storage.maxFluidContent
+    for idx, item in pairs( outputItems ) do
+        
+        local sl = nil
+        local sc = nil
+        
+        if item.isFluid then
+            sc = StorageArray.ST_FLUID
+            sl = "Fluid Storage"
         else
-            local inv = getInventoryByName( storage, INV_STORAGE )
-            max = inv.size * primary.stackSize
+            sc = StorageArray.ST_SOLID
+            sl = "Solid Storage"
         end
-        result.max = max
-        setmetatable( result, StorageData )
-        return result
+        
+        -- Get all the storage proxies of the appropriate class for the output item
+        local stores = component.proxy( component.findComponent( sc ) )
+        listProxiesAs( sl, stores, idx == 1 )  -- Only panic on the first (primary) item storage being missing, secondaries may not be monitored as they may be waste product going to a centralized mass-storage
+        
+        if stores ~= nil and #stores > 0 then
+            
+            local sa, reason = StorageArray.new( item, stores )
+            if sa == nil then panic( reason ) end
+            
+            -- Init constant runtime variables
+            sa.thresholdLow  = sa.max * triggerOnThreshold
+            sa.thresholdHigh = sa.max * triggerOffThreshold
+            
+            storageArrays[ idx ] = sa
+            print( " Storage Item  : " .. sa.name)
+            print( " Max Capacity  : " .. tostring( sa.max ) )
+            print( " Threshold Low : " .. tostring( sa.thresholdLow ) )
+            print( " Threshold High: " .. tostring( sa.thresholdHigh ) )
+            
+        end
     end
     
-    for _, store in pairs( stores ) do
-        storageData[ store.hash ] = createStorageData( store )
+end
+
+function setStorageThresholdHigh( p )
+    for _, sa in pairs( storageArrays ) do
+        sa.thresholdHigh = sa.max * p
     end
-    
-    updateStorage()
-    
-    print( " Max Capacity: " .. tostring( storageMax ) )
+end
+
+function setStorageThresholdLow( p )
+    for _, sa in pairs( storageArrays ) do
+        sa.thresholdLow = sa.max * p
+    end
 end
 
 function updateStorage()
-    local current = 0
-    local max = 0
-    
-    for _, sd in pairs( storageData ) do
-        local c, m = sd:update()
-        current = current + c
-        max = max + m
+    local newState = nil
+    for _, sa in pairs( storageArrays ) do
+        sa:update()
+        if sa.current <  sa.thresholdLow  then newState = true end
+        if sa.current >= sa.thresholdHigh then newState = false end
     end
-    
-    storageCurrent = current
-    storageMax = max
+    storageState = newState
 end
 
 
@@ -1546,24 +1426,16 @@ end
 
 
 -- "Admin" Panel --
-local AB_ReflashAndReboot = { 0, 0 }
+local AP_ReflashAndReboot = { 0, 0 }
 local adminPanels = nil
-local adminUIOReflashAndReboot = nil
+adminUIOReflashAndReboot = nil
+____RebootMessage = "Reflash and Reboot"
+____RebootMessageLen = utf8.len( ____RebootMessage )
 
 ---Event UIO callback
 local function triggerReflashAndReboot( edata )
-    print( "Trigger: ResetTerminal" )
-    adminUIOReflashAndReboot:setState( false )
-    
-    local result, reason = updateEEPROM()
-    if not result then
-        print( "could not update EEPROM:\n" .. reason )
-        return
-    end
-    
-    -- Reboot the computer
-    computer.beep()
-    computer.reset()
+    --print( "Trigger: ResetTerminal" )
+    rebootTerminal()
 end
 
 
@@ -1572,19 +1444,103 @@ function getAdminPanels()
     listProxiesAs( "Single Module Panels", adminPanels )
     
     if adminPanels == nil or #adminPanels == 0 then
-        print( "Warning: No module panels found, manual reflashing and reboots are required.")
+        print( "Warning: No single module panels found, manual reflashing and reboots are required.")
         return
     end
     
     -- Create the combinator or panic
-    adminUIOReflashAndReboot = UIO.createButtonCombinator( adminPanels, AB_ReflashAndReboot, triggerReflashAndReboot, { r = 1.0, g = 0.0, b = 0.0, a = 1.0 }, { r = 1.0, g = 0.0, b = 0.0, a = 0.0 } )
+    adminUIOReflashAndReboot = UIO.createButtonCombinator( adminPanels, AP_ReflashAndReboot, triggerReflashAndReboot, { r = 1.0, g = 0.0, b = 0.0, a = 1.0 }, { r = 1.0, g = 0.0, b = 0.0, a = 0.0 } )
     if adminUIOReflashAndReboot == nil then
-        computer.panic( debug.traceback( "Could not create EEPROM Flash and Reboot UIO Combinator" ) )
+        panic( debug.traceback( "Could not create EEPROM Flash and Reboot Button Combinator" ) )
     end
     
     -- Set the state to false until we are done booting
     adminUIOReflashAndReboot:setState( false )
 end
+
+
+
+
+-- "User" Panel --
+local UP_btnOnOff = { 0, 2 }
+local UP_potMax   = { 0, 1 }
+local UP_potMin   = { 0, 0 }
+local userPanels = nil
+userUIOSystemOnOff = nil
+local userUIOThresholdMax = nil
+local userUIOThresholdMin = nil
+
+--triggerOnThreshold  = tonumber( EEPROM.Boot.ComputerSettings[ "triggerOnThreshold"  ] ) or 0.25 -- 0.00 to 1.00 as a percent
+--triggerOffThreshold = tonumber( EEPROM.Boot.ComputerSettings[ "triggerOffThreshold" ] ) or 1.00 -- 0.00 to 1.00 as a percent
+
+---Event UIO callbacks
+local function triggerSystemOnOff( edata )
+    --print( "Trigger: System On/Off" )
+    if storageState ~= nil then
+        print( "\nSystem is on automatic control and cannot currently be overridden.\nEither adjust the threshold potentiometers so the current inventory levels are inside the automatic on-off range or,\nturn the computer off and manually operate the switch if you wish you force the system on or off at this time.\n" )
+        computer.beep()
+    end
+    onState = not onState
+    userUIOSystemOnOff:setState( onState )
+    switch.isSwitchOn = onState
+end
+local function valueChangedThresholdMax( edata )
+    --print( "valueChanged: ThresholdMax" )
+    local v = edata[ 3 ]
+    local p = v / 100.0
+    setStorageThresholdHigh( p )
+    triggerOffThreshold = p
+    userUIOThresholdMin:setMax( v - 1 )
+    thresholdChanged = true
+    EEPROM.Boot.ComputerSettings[ "triggeroffthreshold"  ] = tostring( v )
+    EEPROM.Settings.ToComputer()
+end
+local function valueChangedThresholdMin( edata )
+    --print( "valueChanged: ThresholdMin" )
+    local v = edata[ 3 ]
+    local p = v / 100.0
+    triggerOnThreshold = p
+    setStorageThresholdLow( p )
+    userUIOThresholdMax:setMin( v + 1 )
+    thresholdChanged = true
+    EEPROM.Boot.ComputerSettings[ "triggeronthreshold"  ] = tostring( v )
+    EEPROM.Settings.ToComputer()
+end
+
+
+function getUserPanels()
+    userPanels = component.getComponentsByClass( ClassGroup.ModulePanels.SizeableModulePanel )
+    listProxiesAs( "Sizeable Module Panels", userPanels )
+    
+    if userPanels == nil or #userPanels == 0 then
+        print( "Warning: No sizeable module panels found, thresholds and system overrides must be done manually.")
+        return
+    end
+    
+    -- Create the combinators or panic
+    userUIOSystemOnOff = UIO.createButtonCombinator( userPanels, UP_btnOnOff, triggerSystemOnOff, { r = 0.0, g = 1.0, b = 0.0, a = 1.0 }, { r = 0.0, g = 1.0, b = 0.0, a = 0.0 } )
+    if userUIOSystemOnOff == nil then
+        panic( debug.traceback( "Could not create System On/Off Button Combinator" ) )
+    end
+    
+    -- Set the state to false until we are done booting
+    adminUIOReflashAndReboot:setState( false )
+    
+    -- Get the threshold potentiometers
+    local iOn = math.floor( triggerOnThreshold * 100.0 )
+    local iOff = math.floor( triggerOffThreshold * 100.0 )
+    
+    userUIOThresholdMax = UIO.createPotentiometerCombinator( userPanels, UP_potMax, valueChangedThresholdMax, iOff, iOn + 1, 100 )
+    if userUIOThresholdMax == nil then
+        panic( debug.traceback( "Could not create Threshold Max Potentiometer Combinator" ) )
+    end
+    
+    userUIOThresholdMin = UIO.createPotentiometerCombinator( userPanels, UP_potMin, valueChangedThresholdMin, iOn, 0, iOff - 1 )
+    if userUIOThresholdMin == nil then
+        panic( debug.traceback( "Could not create Threshold Min Potentiometer Combinator" ) )
+    end
+end
+
 
 
 
@@ -1637,9 +1593,9 @@ function updateRSSElements()
     
     if not rssStaticElementsSet then
         setRSSTextElement( 0, recipe.name, cWhite )
-        setRSSTextElement( 2, formatNumber( storageMax ), cWhite )
+        setRSSTextElement( 2, tostring( storageMax ), cWhite )
         
-        if primary.isFluid then
+        if outputItems[ 1 ].isFluid then
             setRSSTextElement( 7, "Volume (m³)", cWhite )
         else
             setRSSTextElement( 7, "Inventory", cWhite )
@@ -1648,8 +1604,8 @@ function updateRSSElements()
         rssStaticElementsSet = true
     end
     
-    setRSSTextElement( 1, formatNumber( storageCurrent ), cWhite )
-    setRSSTextElement( 3, formatNumber( throughput.rate, 0, 2, true ), cWhite )
+    setRSSTextElement( 1, tostring( storageCurrent ), cWhite )
+    setRSSTextElement( 3, tostring( throughput.rate, 0, 2, true ), cWhite )
     setRSSTextElement( 4, getStatusString(), cWhite )
     
 end
@@ -1659,7 +1615,7 @@ end
 -- Screen size calculator for Component Network config --
 
 function getTotalDisplayLines()
-    local t = 6 -- Update with fixed lines on the display (titles, headers, etc)
+    local t = 7 -- Update with fixed lines on the display (titles, headers, etc)
     local function addToT( base, able )
         local c = table.countKeyValuePairs( able )
         --print( c, t )
@@ -1667,18 +1623,22 @@ function getTotalDisplayLines()
             t = t + base + c
         end
     end
-    addToT( 1, machines )
+    addToT( 2, machineDatum )
     addToT( 2, inputItems )
     addToT( 2, outputItems )
-    addToT( 5, storageData )
+    for _, sa in pairs( storageArrays ) do
+        t = t + 5 + sa.count
+    end
+    t = t + ( #storageArrays - 1 ) -- Add one blank line for each output after the first
     return t
 end
 
 function getRecommendedScreenSize()
     local tL = getTotalDisplayLines()
+    print( "Estimated lines: " .. tostring( tL ) )
     local pW = panelsWide
     local pH = math.max( 1, math.ceil( tL / screenCRPP ) )
-    local cC = pW * screenCCPP
+    local cC = screenWidth
     local cR = pH * screenCRPP
     return pW, pH, cC, cR
 end
@@ -1689,91 +1649,56 @@ end
 -- Runtime Variables --
 thresholdLow  = -1
 thresholdHigh = -1
+thresholdChanged = false    -- Dirty rect
 
 onState = false
 
 local statusCharIndex = 0
-local statusChars = PWR_STATUS_ON   -- Using the same characters for the spiny circle
+local statusChars = ACT_STATUS_ON   -- Using the same characters for the spiny circle
 function getStatusString()
     statusCharIndex = ( statusCharIndex + 1 )
     if statusCharIndex > #statusChars then statusCharIndex = 1 end -- Would do modulus but Lua arrays aren't zero based
     if onState then
-        return statusChars[ statusCharIndex ] .. 'nline'
+        return statusChars[ statusCharIndex ] .. 'nline '
     end
     return statusChars[ statusCharIndex ] .. 'ffline'
 end
 
 
-
-throughput = {}
-throughUpdateTimeToMinute = 60000 / throughputUpdateMS  -- Scalar to get the per minute rate
-
-
-function initThroughput()
-    throughput = {}
-    throughput.rate          = 0.0
-    throughput.items         = 0
-    throughput.deltaTime     = 0
-    throughput.lastCount     = storageCurrent
-    throughput.lastTimestamp = computer.millis()
-end
-
-function updateThroughput()
-    -- Update the throughput rate as monitored on the Storage
-    
-    local newCount = storageCurrent
-    local newTimestamp = computer.millis()
-    
-    local deltaCount = ( newCount     - throughput.lastCount     )
-    local deltaTime  = ( newTimestamp - throughput.lastTimestamp )
-    
-    throughput.items     = throughput.items     + deltaCount
-    throughput.deltaTime = throughput.deltaTime + deltaTime
-    
-    if throughput.deltaTime > throughputUpdateMS then
-        throughput.rate = ( throughput.items * ( throughput.deltaTime / throughputUpdateMS ) ) * throughUpdateTimeToMinute
-        throughput.items = 0
-        throughput.deltaTime = 0
-    end
-    
-    throughput.lastCount     = newCount
-    throughput.lastTimestamp = newTimestamp
-end
-
-
 function updateState()
-    if onState and storageCurrent >= thresholdHigh then
-        onState = false
-    elseif not onState and storageCurrent <= thresholdLow then
-        onState = true
+    if storageState ~= nil then
+        onState = storageState
     end
 end
 
 
-local nextSignUpdate = -1
+nextSignUpdate = -1
+local firstDraw = true
 function updateDisplays()
     local newTimestamp = computer.millis()
+    if nextSignUpdate > newTimestamp + signUpdateMS then nextSignUpdate = -1 end
     if newTimestamp < nextSignUpdate then return end
     
     nextSignUpdate = newTimestamp + signUpdateMS
     
-    updateScreens()
+    updateScreens( firstDraw )
     updateRSSPanels()
     
+    firstDraw = false
 end
 
 
 
-local nextCycleUpdate = -1
+nextCycleUpdate = -1
 function handleProductionCycle()
     local newTimestamp = computer.millis()
+    if nextCycleUpdate > newTimestamp + cycleUpdateMS then nextCycleUpdate = -1 end
     if newTimestamp < nextCycleUpdate then return end
     
     nextCycleUpdate = newTimestamp + cycleUpdateMS
     
     -- Update the data to work with
     updateStorage()
-    updateThroughput()
     updateState()
     updateCycleData()
     
@@ -1803,19 +1728,27 @@ function Init()
     
     -- Sanity checks against the user being a big derpy head
     if triggerOffThreshold > 1.0 then
-        computer.panic( "triggerOffThreshold > 1.0" )
+        panic( "triggerOffThreshold > 1.0" )
     end
     if triggerOnThreshold < 0.0 then
-        computer.panic( "triggerOnThreshold < 0.0" )
+        panic( "triggerOnThreshold < 0.0" )
     end
     if triggerOnThreshold >= triggerOffThreshold then
-        computer.panic( "triggerOnThreshold >= triggerOffThreshold" )
+        panic( "triggerOnThreshold >= triggerOffThreshold" )
     end
     
+    
+    -- Get GPUs to drive Screens
+    getGPUs()
+    
+    -- Get Screens to be driven by GPUs
+    getScreens()
     
     -- Get the "admin panels"
     getAdminPanels()
     
+    -- Get the "user panels"
+    getUserPanels()
     
     -- Get the one and only power switch
     getSwitch()
@@ -1826,7 +1759,7 @@ function Init()
     -- Get the recipe from the machine
     getRecipeAndProduct()
     
-    -- We've got the machines and the recipe, now check for compatible storage
+    -- We've got the machines and the product[s], now check for compatible storage
     getStorage()
     
     -- Get any valves controlling fluid in-flow
@@ -1836,35 +1769,26 @@ function Init()
     getMergers()
     
     
-    -- Init constant runtime variables
-    thresholdLow  = storageMax * triggerOnThreshold
-    thresholdHigh = storageMax * triggerOffThreshold
-    
-    print( "thresholdLow : " .. tostring( thresholdLow  ) )
-    print( "thresholdHigh: " .. tostring( thresholdHigh ) )
-    
-    MachineData.Collimator = createMachineDataCollimator()
+    local result, reason = MachineDatum.Collimator.new( machineType, outputItems, inputItems, screenWidth, baseProductionTime, screensSetText )
+    if result == nil then panic( reason ) end
+    machineCollimator = result
     
     -- Compute the recommended screen size
     print( string.format( "Recommended screen size:\n\tPanels: %d x %x\n\tCharacters: %d x %d", getRecommendedScreenSize() ) )
     
-    -- Get GPUs to drive Screens
-    getGPUs()
-    
-    -- Get Screens to be driven by GPUs
-    getScreens()
-    
     -- Find the RSS Panels for "pretty formatting"
     getRSSPanels()
     
-    -- Flow rate monitoring setup
-    initThroughput()
-    
-    -- Setup the machine data
-    initMachineData()
-    
     -- Reset RSS Signs
     updateRSSPanels()
+    
+    -- Data gathering complete, now set the system to the initial state
+    
+    -- Update the control logic
+    handleProductionCycle()
+    
+    -- Redraw all the screens and panels to the initial state
+    updateDisplays()
     
     -- Change the state of the reboot button last as it is our final indicator the system is truly done booting up
     if adminUIOReflashAndReboot ~= nil then

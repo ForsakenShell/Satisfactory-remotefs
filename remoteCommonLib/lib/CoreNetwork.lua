@@ -122,7 +122,7 @@ function CoreNetwork.decodePacket( packet )
     end
     local pid = pdata[ CoreNetwork.__PacketID ]
     if pid == nil then
-        print( string.format( "Bad packet - no '%s' : '%s'\n%s", CoreNetwork.__PacketID, packet, debug.traceback() ) )
+        print( debug.traceback( string.format( "Bad packet - no '%s' : '%s'\n%s", CoreNetwork.__PacketID, packet ), 2 ) )
         return nil, nil
     end
     packet_id = math.tointeger( pid )
