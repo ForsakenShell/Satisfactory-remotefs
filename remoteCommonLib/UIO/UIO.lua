@@ -5,6 +5,7 @@
 local UIO = _G[ "____UIO" ]
 if UIO ~= nil then return UIO end
 UIO = {}
+UIO.__index = UIO
 _G[ "____UIO" ] = UIO
 
 
@@ -21,6 +22,21 @@ local UIOElement = {
 }
 UIOElement.__index = UIOElement
 UIO.UIOElement = UIOElement
+
+
+
+
+---Tests whether the passed in variable is a UIOElement
+---@param e any
+---@return boolean true if e is a UIOElement, false otherwise
+function UIO.isUIOElement( e )
+    if e == nil or type( e ) ~= "table" then return false end
+    -- Try and get the template
+    local mt = getmetatable( e )
+    if mt == nil or mt.__index == nil then return false end
+    -- Check if the "template" is a UIOElement
+    return mt.__index.__index == UIOElement
+end
 
 
 

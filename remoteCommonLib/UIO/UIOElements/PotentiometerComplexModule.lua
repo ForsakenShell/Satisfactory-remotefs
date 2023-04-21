@@ -18,6 +18,7 @@ local PotentiometerComplexModule = UIO.UIOElement.template(
     {
         -- Class Constants
         -- Instance data
+        ____setColor = function( proxy, r, g, b, a ) end,
     }
 )
 UIO.UIOElements.PotentiometerComplexModule = PotentiometerComplexModule
@@ -26,6 +27,11 @@ UIO.UIOElements.PotentiometerComplexModule = PotentiometerComplexModule
 
 
 -- The core functions of a UIOElement this can handle
+
+
+function PotentiometerComplexModule:setForeColor( color )
+    self.____setColor( self.target, color.r, color.g, color.b, color.a )
+end
 
 
 function PotentiometerComplexModule:setValue( value )
@@ -58,12 +64,20 @@ end
 ---@param potentiometer userdata The potentiometer
 ---@return PotentiometerComplexModule The UIOElement or nil
 function PotentiometerComplexModule.create( potentiometer )
-    return UIO.UIOElement.create(
+    local uio = UIO.UIOElement.create(
         PotentiometerComplexModule,
         potentiometer,
         {
         }
     )
+    if uio == nil then return nil end
+    
+    local sc = potentiometer[ "setColor" ]
+    if sc ~= nil then
+        uio.____setColor = sc
+    end
+    
+    return uio
 end
 
 
