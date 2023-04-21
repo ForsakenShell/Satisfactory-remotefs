@@ -1050,8 +1050,9 @@ function SignLayout.isSignLayout( o )
         return result
     end
     -- Lazy test
-    return  o.getmetatable() ~= nil
-    and     o.getmetatable().__index == SignLayout
+    local mt = getmetatable( o )
+    return  mt ~= nil
+    and     mt.__index == SignLayout
 end
 
 ---Create a new SignLayout table to hold the ElementData and describe the basic canvas
