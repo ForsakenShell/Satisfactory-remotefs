@@ -13,7 +13,7 @@ print( "\nInitialising HypertubeNode.Network\n\nLast Update: " .. UPDATED .. "\n
 
 
 -- Require the core components
-local CoreNetwork           = require( "/lib/CoreNetwork.lua", ____RemoteCommonLib )
+local CoreNetwork           = require( "/lib/CoreNetwork.lua", EEPROM.Remote.CommonLib )
 local Color = require( "/lib/Colors.lua" )
 
 
@@ -205,7 +205,7 @@ function Network.handleAdminReset( net, sender, payload )
     
     -- Optionally flash the EEPROM
     if payload.updateEEPROM then
-        updateEEPROM()
+        EEPROM.Remote.Update()
     end
     
     -- Reboot the computer

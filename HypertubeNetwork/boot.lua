@@ -13,7 +13,7 @@
 if ____Disk_UUID ~= nil and ____Disk_UUID ~= '' then
     -- A disk in the Hypertube Node computer means the player is doing some
     -- maintainence on the network and will want a full log of events.
-    require( "/lib/ConsoleToFile.lua", ____RemoteCommonLib )
+    require( "/lib/ConsoleToFile.lua", EEPROM.Remote.CommonLib )
 end
 
 

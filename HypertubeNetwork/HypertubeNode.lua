@@ -1,3 +1,4 @@
+Module = { Version = { full = { 1, 0, 0, '' } } }
 ---
 --- Created by 1000101
 --- DateTime: 15/02/2023 7:05 am
@@ -7,8 +8,28 @@
 
 --- TODO:  Move parts of this into their own source file, ie: UIO, RSSBuilder, etc
 
-local UPDATED = "14/03/2023 1:40 am"
-print( "\nInitialising HypertubeNode\n\nLast Update: " .. UPDATED .. "\n" )
+if EEPROM == nil then
+    panic( "EEPROM is out of date!\nRequired: EEPROM v1.3.8 or later")
+end
+
+-- Versioning --
+Module.Version.pretty = EEPROM.Version.ToString( Module.Version.full )
+--[[ version history
+n/a
+ + Initial release
+1.0.0
+ + Updated for EEPROM v1.3.8
+]]
+
+
+
+if EEPROM.Boot.Disk ~= nil and EEPROM.Boot.Disk ~= '' then
+    -- A disk in the Production Terminal computer means the player is doing some
+    -- maintainence on the network and will want a full log of events.
+    require( "/lib/ConsoleToFile.lua", EEPROM.Remote.CommonLib )
+end
+
+print( "\nInitialising HypertubeNode " .. Module.Version.pretty .. "\n" )
 
 
 
@@ -60,20 +81,49 @@ HypertubeNode.__index = HypertubeNode
 --------------------------------------------------------------------------------
 
 
-local ClassGroup = require( "/lib/classgroups.lua", ____RemoteCommonLib )
-local RSSBuilder = require( "/lib/RSSBuilder.lua", ____RemoteCommonLib )
-local Vector2d = require( "/lib/Vector2d.lua", ____RemoteCommonLib )
-local Vector2f = require( "/lib/Vector2f.lua", ____RemoteCommonLib )
-local Vector3f = require( "/lib/Vector3f.lua", ____RemoteCommonLib )
-local Vector4F = require( "/lib/Vector4F.lua", ____RemoteCommonLib )
+require( "/lib/AdjacencyMatrix.lua" )
 
 
-local Color = require( "/lib/Colors.lua" )
-local UIO = require( "/lib/UIOElements.lua" )
+local ClassGroup = require( "/lib/classgroups.lua", EEPROM.Remote.CommonLib )
+local Vector2d = require( "/lib/Vector2d.lua", EEPROM.Remote.CommonLib )
+local Vector3f = require( "/lib/Vector3f.lua", EEPROM.Remote.CommonLib )
 local Network = require( "/lib/Network.lua" )
 
+-- Both Junctions and Destination nodes need basic UIO and Colors
+local Color = require( "/lib/Colors.lua" )
+local UIO = require( "/lib/UIOElements.lua" )
 
-require( "/lib/AdjacencyMatrix.lua" )
+-- Destination Nodes are heavier but oh so pretty
+local RSSBuilder = nil
+local Vector2f = nil
+local Vector4F = nil
+
+
+---Try and load the given module, will panic the node if the module is not loaded.
+---@param name any Pretty name the of the module to load
+---@param modname any name of the module to load (filepath)
+---@param commonLib bool Optional, is this in the EEPROM.Remote.CommonLib?  (default: false)
+local function tryLoadModule( name, modname, commonLib )
+    if commonLib == nil or type( commonLib ) ~= "boolean" then commonLib = false end
+    local remotefs = nil
+    if commonLib then remotefs = EEPROM.Remote.CommonLib end
+    local result = require( modname, remotefs, false )
+    if result == nil then
+        if remotefs == nil then remotefs = EEPROM.Remote.CommonLib end
+        local extra = string.format( "modname : %s\nremotefs : %s", modname, remotefs )
+        HypertubeNode.panicNode( true, "Unable to load module: " .. name, extra, true, 3 )
+    end
+    return result
+end
+
+---Try and load all the additional modules required for a Destination Node
+local function tryLoadDesinationNodeModules()
+    RSSBuilder = tryLoadModule( "RSSBuilder", "/lib/RSSBuilder.lua", true )
+    Vector2f = tryLoadModule( "Vector2f", "/lib/Vector2f.lua", true )
+    Vector4F = tryLoadModule( "Vector4F", "/lib/Vector4F.lua", true )
+end
+
+
 
 
 --------------------------------------------------------------------------------
@@ -563,12 +613,12 @@ local function generateBaseRSSSignLayout()
     mOverwriteImageSize = Vector2f.new( 48.000000, 48.000000 )
     mTexture = "/RSS/Assets/Images/Milestones/rss_milestone.rss_milestone"
     local mUrlPattern = '%s%s/images/%s'
-    local mUrl = string.format( mUrlPattern, ____RemoteFSBaseURL, ____RemoteFS, "ANS-E-Profile.png" )
+    local mUrl = string.format( mUrlPattern, EEPROM.Remote.FSBaseURL, EEPROM.Remote.CommonLib, "ANS-E-Profile.png" )
     mPosition = Vector2f.new( 352.000000, 224.000000 )
     if not addRSSImageElementToLayout( layout, RSS_EID_FILLER + 1, "icnLogoMe"   , RSS_EZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize, nil, mUrl ) then return nil end
     
     -- FIN
-    mUrl = string.format( mUrlPattern, ____RemoteFSBaseURL, ____RemoteFS, "ficsit-network-logo.png" )
+    mUrl = string.format( mUrlPattern, EEPROM.Remote.FSBaseURL, EEPROM.Remote.CommonLib, "ficsit-network-logo.png" )
     mPosition = Vector2f.new( 416.000000, 224.000000 )
     if not addRSSImageElementToLayout( layout, RSS_EID_FILLER + 2, "icnLogoFIN"  , RSS_EZINDEX_FILLER, mPosition, mTexture, nil, mOverwriteImageSize, nil, mUrl ) then return nil end
     
@@ -605,7 +655,7 @@ local function generateMapAndAppendSignLayout()
     HypertubeNode.mapHash = nil
     local networkValid, reason = isNetworkMapValid()
     if not networkValid then
-        print( reason )
+        print( "generateMapAndAppendSignLayout() : " .. reason )
         return false
     end
     
@@ -796,7 +846,7 @@ end
 
 ---Read the node "name" value from the computer settings and determine the operating mode (destination if "name" is set, junction if not or empty)
 local function getNodeName()
-    local name = ____ComputerSettings[ "name" ]             -- Only for destinations
+    local name = EEPROM.Boot.ComputerSettings[ "name" ]             -- Only for destinations
     if name ~= nil and name == '' then name = nil end       -- Force empty to nil
     HypertubeNode.name = name                               -- Assign the name
     if name ~= nil then
@@ -811,7 +861,7 @@ end
 
 ---Read the node "vertex" value from the computer settings or panic if invalid
 local function getNodeVertex()
-    local vertex = ____ComputerSettings[ "vertex" ]
+    local vertex = EEPROM.Boot.ComputerSettings[ "vertex" ]
     if vertex == nil or tonumber( vertex ) == nil then
         HypertubeNode.panicNode( true, "Invalid vertex" )
     end
@@ -871,7 +921,7 @@ local function getNodeConnections()
                 hasConn[ remote ] = true
             end
         else
-            print( string.format( "Ignoring switch:\n\tnick = '%s'\n\tinternalName = %s\n\tlocation = %s", nick, switch.internalName, Vector3f.ToString( switch.location ) ) )
+            --print( string.format( "Ignoring switch:\n\tnick = '%s'\n\tinternalName = %s\n\tlocation = %s", nick, switch.internalName, Vector3f.ToString( switch.location ) ) )
         end
     end
     
@@ -1162,7 +1212,7 @@ local function checkRSSSignElementsAndMapHash()
     
     for _, sign in pairs( HypertubeNode.signs ) do
         
-        local signSettings = readNetworkComponentSettings( sign )
+        local signSettings = EEPROM.Settings.FromComponentNickname( sign )
         local signMapHash = signSettings[ HypertubeNode.SETTING_MAPHASH ] or 'nil'
         local hashMatch = signMapHash == mapHash
         local layoutMatch, layoutReason = signLayout:signMatches( sign )
@@ -1208,7 +1258,7 @@ local function refreshRSSSignsFromLayout( clearStatus )
             end
         end
     else
-        print( reason )
+        print( "refreshRSSSignsFromLayout() : " .. reason )
     end
     
     if lastLayoutState ~= newLayoutState then
@@ -1268,7 +1318,7 @@ function HypertubeNode.updateMapToggleMode( showMap )
         showMap = false
         uioState = false
     elseif not networkValid then
-        print( reason )
+        print( "HypertubeNode.updateMapToggleMode( " .. tostring( showMap ) .. " ) : " .. reason )
         t = 'Waiting for network'
         showMap = false
         uioState = false
@@ -1614,23 +1664,39 @@ end
 ---@param truepanic boolean Is this a true panic (true = call computer.panic()) or not (false = "we interrupt this program to annoy you and make things generally irritating")
 ---@param message string The Status message to display on the signs and to write to the console/computer.panic()
 ---@param extra? string Additional information added to the console/panic message
-function HypertubeNode.panicNode( truepanic, message, extra )
+---@param bypassSigns? boolean Skip setting the status on the RSS Signs (eg, before they or the Color module are available)
+---@param tracebackLevel? integer Level to start the traceback - default is 1, the function calling this.
+function HypertubeNode.panicNode( truepanic, message, extra, bypassSigns, tracebackLevel )
     truepanic = truepanic or false
+    bypassSigns = bypassSigns or false
+    if Color == nil then bypassSigns = true end
+    tracebackLevel = tracebackLevel or 1
+    if tracebackLevel < 1 then tracebackLevel = 1 end
+    tracebackLevel = tracebackLevel + 1
     
-    local fcolor
+    if not bypassSigns then
+        local fcolor
+        if truepanic then
+            fcolor = Color.RED_SIGN_LOW
+        else
+            fcolor = Color.YELLOW_SIGN_BRDRTEXT
+        end
+        
+        local fcolor
+        HypertubeNode.setNodeStatus( message, fcolor, Color.GREY_0125 )
+    end
+    
     local prefix
     if truepanic then
         prefix = "ERROR"
-        fcolor = Color.RED_SIGN_LOW
     else
         prefix = "Warning"
-        fcolor = Color.YELLOW_SIGN_BRDRTEXT
     end
     
-    HypertubeNode.setNodeStatus( message, fcolor, Color.GREY_0125 )
-    
     extra = extra or ''
-    local m = string.format( '%s:\n%s\n%s\n%s', prefix, message, extra, debug.traceback() )
+    local eprefix = ''
+    if extra ~= '' then eprefix = '\n' end
+    local m = debug.traceback( string.format( '%s : %s%s%s', prefix, message, eprefix, extra ), tracebackLevel )
     if truepanic then
         computer.panic( m )
     else
@@ -1658,13 +1724,15 @@ function HypertubeNode.init()
         
         -- Give all the signs an ID on the network and make it obvious they are possibly missing their map data (by way of the mapHash)
         for i, sign in pairs( signs ) do
-            local signSettings = readNetworkComponentSettings( sign )
+            local signSettings = EEPROM.Settings.FromComponentNickname( sign )
             if sign.nick == nil or sign.nick == '' or signSettings[ HypertubeNode.SETTING_MAPHASH ] == nil then    -- Don't need to do this, just want the sign to show up neatly when looking at the Component Network on the plug/pole/whatever
-                signSettings[ "RSSSign" ] = tostring( i )
                 signSettings[ HypertubeNode.SETTING_MAPHASH ] = 'nil'
-                writeNetworkComponentSettings( sign, signSettings )
+                EEPROM.Settings.ToComponentNickname( sign, signSettings )
             end
         end
+        
+        -- After we've checked the RSS Signs and updated their nicks, try and load the additional modules required for a Destination Node
+        tryLoadDesinationNodeModules()
         
         refreshRSSSignsFromLayout( false ) -- No longer using a combinator for status as we may (do) need to access it before the UIO combinators are created
         
@@ -1748,7 +1816,7 @@ function HypertubeNode.init()
     
     
     -- This will auto-update with the last known network_size when the node is told to reboot
-    HypertubeNode.hyper_network_size = ____ComputerSettings[ "network_size" ] or Network.Default.NETWORK_SIZE
+    HypertubeNode.hyper_network_size = EEPROM.Boot.ComputerSettings[ "network_size" ] or Network.Default.NETWORK_SIZE
     if HypertubeNode.hyper_network_size < Network.Default.NETWORK_SIZE then
         HypertubeNode.hyper_network_size = Network.Default.NETWORK_SIZE
     end
@@ -1846,7 +1914,7 @@ function HypertubeNode.init()
         nil, adminpanels,
         nil, FMP_MI_NETWORK_RESET,
         nil, nil,
-        nil, nil
+        Color.RED_BUTTON_HIGH, Color.RED_BUTTON_LOW
     )
     
     if not HypertubeNode.UIO.ResetNetwork:setSignalHandler( "Trigger", triggerResetNetwork ) then

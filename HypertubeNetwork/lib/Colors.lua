@@ -1,6 +1,6 @@
 -- Colors!
 
-local Color = require( "/lib/Colors.lua", ____RemoteCommonLib )
+local Color = require( "/lib/Colors.lua", EEPROM.Remote.CommonLib )
 
 
 
