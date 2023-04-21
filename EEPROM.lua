@@ -1,4 +1,4 @@
-EEPROM = { Version = { full = { 1, 3, 8, '' } } }
+EEPROM = { Version = { full = { 1, 3, 8, 'a' } } }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
@@ -57,7 +57,7 @@ EEPROM.Remote.EEPROM    = EEPROM.Remote.FSBaseURL .. '/EEPROM.lua'
 
 
 
----Format a version table of { integer, integer, integer, char } into a string
+---Is the version table valid?
 function EEPROM.Version.IsValid( t )
     -- Input table can be 3 or 4 component
     if type( t ) ~= "table" or #t < 3 or #t > 4 then return false end
@@ -77,6 +77,7 @@ function EEPROM.Version.IsValid( t )
     )
 end
 
+---Format a version table of { integer, integer, integer, char } into a string
 function EEPROM.Version.ToString( t )
     if not EEPROM.Version.IsValid( t ) then return nil end
     return string.format( 'v%d.%d.%d%s', t[ 1 ], t[ 2 ], t[ 3 ], t[ 4 ] )
@@ -141,7 +142,7 @@ end
 ---@return table table {key=field,value=value*} *value will not be quoted despite the requirement to enclose the value in double quotes in the nick
 function EEPROM.Settings.FromComponentNickname( proxy, lowerKeys )
     if proxy == nil then return nil end
-    return EEPROM.Settings.FromString( proxy.nick, lowerKeys )
+    return EEPROM.Settings.FromString( proxy[ "nick" ], lowerKeys )
 end
 
 
@@ -150,7 +151,7 @@ end
 ---@param settings table Settings to be written to the machines nickname
 ---@param lowerKeys? boolean Force the keys to be lowercase, otherwise any cAmElCaSInG is preserved and it will be usercode responsibility to deal with it
 function EEPROM.Settings.ToComponentNickname( proxy, settings, lowerKeys )
-    if proxy == nil then return end
+    if proxy == nil or proxy[ "nick" ] == nil then return end
     local str = EEPROM.Settings.ToString( settings, lowerKeys )
     if str == nil then return end
     proxy[ "nick" ] = str
