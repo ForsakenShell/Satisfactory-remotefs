@@ -127,9 +127,15 @@ function ItemTransferRequest.new( o )
         print( "ItemTransferRequest.new() :: o.mergers is empty" )
         return nil
     end
-    if o.current ~= nil and( type( o.current ) ~= "number" or o.current < 0 )then
-        print( "ItemTransferRequest.new() :: o.current is invalid" )
-        return nil
+    if o.current ~= nil then
+        if type( o.current ) ~= "number" then
+            print( "ItemTransferRequest.new() :: o.current is invalid" )
+            return nil
+        end
+        if o.current < 0 or o.current > o.count then
+            print( "ItemTransferRequest.new() :: o.current is invalid" )
+            return nil
+        end
     end
     o.current = o.current or 0
     setmetatable( o, { __index = ItemTransferRequest } )
