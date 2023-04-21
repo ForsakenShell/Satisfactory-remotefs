@@ -36,8 +36,12 @@ Vector3f.Zero = Vector3f.new( 0.0, 0.0, 0.0 )
 ---@param v any
 ---@return boolean true if v is a Vector3f, false otherwise
 function Vector3f.isVector3f( v )
-    return v ~= nil
-    and type( v ) == "table"
+    if v == nil then return false end
+    local t = type( v )
+    if t == "userdata" then
+        return v[ "x" ] ~= nil and v[ "y" ]  ~= nil and v[ "z" ] ~= nil
+    end
+    return t == "table"
     and getmetatable( v ) ~= nil
     and getmetatable( v ).__index == Vector3f
 end
