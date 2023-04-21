@@ -179,6 +179,10 @@ function StorageArray:storeUsefulData( index )
     return store.name, current, store.max
 end
 
+function StorageArray:resetThroughput()
+    self.__lastCount        = self.current
+    self.__lastTimestamp    = computer.millis()
+end
 
 ---Get the current number of items/stacks this inventory is holding
 function StorageArray:update()
