@@ -66,8 +66,8 @@ end
 function Color.isColor( c )
     return c ~= nil
     and type( c ) == "table"
-    and getmetatable( v ) ~= nil
-    and getmetatable( v ).__index == Color
+    and getmetatable( c ) ~= nil
+    and getmetatable( c ).__index == Color
 end
 
 
