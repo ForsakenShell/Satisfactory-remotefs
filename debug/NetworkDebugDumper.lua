@@ -84,12 +84,12 @@ local function getParameterTypeNameFromProperty( property )
     if property == nil then return nil end
     local pt = tostring( property )
     local sc = nil
-    if      pt == 'ArrayProperty' then
+    if pt == 'ArrayProperty' then
         sc = property:getInner()
         if sc == nil then return nil end
         local innerResult = getParameterTypeNameFromProperty( sc )
         if innerResult == nil then end
-        return 'Array( ' .. innerResult .. ' )'
+        return 'Array( ' .. tostring( innerResult ) .. ' )'
     end
     if pt == 'ClassProperty'
     or pt == 'ObjectProperty'
