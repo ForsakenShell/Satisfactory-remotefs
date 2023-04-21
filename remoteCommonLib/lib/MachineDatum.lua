@@ -184,10 +184,14 @@ end
 
 ----------------------------------------------------------------
 
-function MachineDatum:update()
+function MachineDatum:update( baseProductionTime )
     local machine = self.machine
-    self.cycleTime = machine.cycleTime
     self.potential = machine.potential
+    if baseProductionTime == nil then
+        self.cycleTime = machine.cycleTime
+    else
+        self.cycleTime = baseProductionTime / self.potential
+    end
     self.__lastProgress = self.progress
     self.progress = machine.progress
     self.productivity = machine.productivity
@@ -439,9 +443,9 @@ function Collimator.new( machineType, outputItems, inputItems, maxWidth, basePro
         local nameLen = item.nameLen
         local maxOutput = item.amount * ( 60 / baseProductionTime ) * 2.5    -- Maximum possible output of product
         local w = 3                 -- decimal + two places
-        while maxOutput > 1.0 do    -- add every whole number digit
+        while maxOutput > 0.0 do    -- add every whole number digit
             w = w + 1
-            maxOutput = maxOutput / 10.0
+            maxOutput = math.floor( maxOutput / 10.0 )
         end
         item.pattern = string.format( "%%%d.2f %s/m", w, item.units )
         w = w + 3 + item.unitsLen   -- Pattern + space + units
