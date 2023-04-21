@@ -18,11 +18,14 @@ function component.getComponentsByClass( class )
         
     elseif type( class ) == "string" then
         --print( class )
-        local comps = component.findComponent( findClass( class ) )
-        for _, c in pairs( comps ) do
-            local proxy = component.proxy( c )
-            if not table.hasValue( results, proxy ) then
-                table.insert( results, proxy )
+        local ctype = findClass( class )
+        if ctype ~= nil then
+            local comps = component.findComponent( ctype )
+            for _, c in pairs( comps ) do
+                local proxy = component.proxy( c )
+                if not table.hasValue( results, proxy ) then
+                    table.insert( results, proxy )
+                end
             end
         end
     end
@@ -33,33 +36,37 @@ end
 
 
 
--- Storage constants --
+-- Storage name constants --
+component.INV_INVENTORY     = 'Inventory'
 component.INV_STORAGE       = 'StorageInventory'
 component.INV_INPUT         = 'InputInventory'
 component.INV_OUTPUT        = 'OutputInventory'
 component.INV_POTENTIAL     = 'InventoryPotential'
 
----Get an inventories index by it's internal name.  Why?  Because not everything with an inventory uses the same index.
-function component.getInventoryIndexByName( proxy, inventory )
-    if proxy == nil or type( proxy ) ~= "userdata" then return nil end
+---Get an inventories index by it's internal name.  Why?  Because not everything with an inventory uses the same index but they use the same name.
+function component.getInventoryIndexByName( proxy, name )
+    if proxy == nil then return nil end
+    if type( proxy ) ~= "userdata" then return nil end
     local gi = proxy[ "getInventories" ]
     if gi == nil or type( gi ) ~= "function" then return nil end
     local inventories = gi( proxy )
     for idx = 1, #inventories do
         local inv = inventories[ idx ]
-        if inv.internalName == inventory then return idx end
+        if inv.internalName == name then return idx end
     end
     return nil
 end
 
----Get an inventory by it's internal name instead of index.  Why?  Because not everything with an inventory uses the same index.
-function component.getInventoryByName( proxy, inventory )
+---Get an inventory by it's internal name instead of index.  Why?  Because not everything with an inventory uses the same index but they use the same name.
+function component.getInventoryByName( proxy, name )
     if proxy == nil or type( proxy ) ~= "userdata" then return nil end
     local gi = proxy[ "getInventories" ]
     if gi == nil or type( gi ) ~= "function" then return nil end
     local inventories = gi( proxy )
+    --print( proxy.internalName )
     for _, inv in pairs( inventories ) do
-        if inv.internalName == inventory then return inv end
+        --print( _, "'" .. inv.internalName .. "'" )
+        if inv.internalName == name then return inv end
     end
     return nil
 end
