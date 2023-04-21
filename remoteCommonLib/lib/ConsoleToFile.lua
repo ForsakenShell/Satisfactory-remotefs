@@ -33,7 +33,15 @@ print = function( ... )
             end
         end
         s = s .. '\n'
-        ____ConsoleHandle:write( s )
+        
+        local retry = 0
+        local function writeIt()
+            ____ConsoleHandle:write( s )
+        end
+        while retry < 10 and not pcall( writeIt ) do
+            retry = retry + 1
+        end
+        if retry >= 10 then __oldPrint( ... ) end
         
         --____ConsoleHandle:write( ... )
         --____ConsoleHandle:write( '\n' )
