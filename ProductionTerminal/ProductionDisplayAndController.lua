@@ -1,4 +1,4 @@
-Module = { Version = { full = { 1, 4, 11, '' } } }
+Module = { Version = { full = { 1, 4, 12, '' } } }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
@@ -15,14 +15,15 @@ Optional control values:
     triggeroffthreshold="integer"       -- Percent 1..100, default: 100; must be larger then triggeronthreshold
     autoupdate="boolean"                -- true or false, default: false; automatically reflash the EEPROM and reboot the computer when a new remote version is detected
 
-This script will control a "bank" of "Machines" (Manufacturers or Extractors) power via a CircuitSwitch, valves
-(for fluids) and, codeable mergers (for solids).
+This script will control a "bank" of "Machines" (Manufacturers or Extractors) power via switches (power), input valves
+(fluids) and, input codeable mergers (solid items).
 
 This monitors the inventory levels of an FGBuildableStorage or PipeReservoir (ie, Storage Container, Fluid Buffer,
-etc) and sets the CircuitSwitch on/off state depending on the inventory level and the programmable thresholds.
+etc) and sets the Switches on/off states depending on the inventory level and the programmable thresholds.
 
 All RSS Buildable Signs (optimized for 2:1) connected to the network will have the "pretty format" display for
 monitoring at a distance.
+TODO:  Generate RSSBuilder.Layout from existing template
 
 Detailed monitoring of individual machines performance and will be output all the Screen (Build_Screen_C only)
 on the network.
@@ -48,12 +49,12 @@ Network Setup:
 |       require bigger.
 |       NOTE:  Each Screen requires it's own GPU in the Computer to drive it.
 |       NOTE:  You do not need a screen+GPU or any RSS Signs for this script to function, you will just
-|           get no feedback beyond the controlled behaviour of the switch and machines.
+|           get no feedback beyond the controlled behaviour of the switches and machines.
 |       NOTE:  Only Screens require a GPU to drive it, RSS Signs do not.
 |
 +- "CircuitSwitch":
-|   1   Power Switch (or compatible) connected for controlling power flow to the Machines.  This can control
-|       exactly one or no switches, more than one doesn't make sense for the purpose of this script.
+|   1+  Power Switch[es] (or compatible) connected for controlling power flow to the Machines.  This can control
+|       one or more switches.
 |
 +- "Manufacturer" or "FGBuildableResourceExtractorBase" class "Machines"
 |   1+  As many as you want, however they must be the same class and producing the same recipe/extracting the
@@ -77,8 +78,13 @@ Network Setup:
 |
 +- "CodeableMerger" (optional):
 |   0+  Only for solid inputs, will pass through recipe items when the Machines are turned on and off, respectively.
-|       Recommended: Use the Powered Splitter and Merger mod as valves instead of Codeable Mergers as they require
-|         no active processing by the FIN computer and are handled directly by the game engine.
+|       Recommended: Use Wiremods Constant Gate and Conveyor Limiters as valves instead of Codeable Mergers as they require
+|         no active processing by the FIN computer and are handled much more efficiently by the game engine.
+|
++- Wiremod "Build_Const_C" (optional):
+|   1   Only for solid inputs, will pass through recipe items when the Machines are turned on and off, respectively.
+|       Used as the single interface to a group of Conveyor Limiters used to gate the solid inputs.
+|       Recommended: Use this method instead of CodeableMergers which require active processing.
 |
 +- "PipelinePump" (optional):
 |   0+  Only for Fluid inputs, can open and close the valve when the Machines are turned on and off, respectively.
@@ -90,7 +96,7 @@ Network Setup:
 |
 +- "Sizeable Module Panel" (optional):
 |   0+  1x3 - Layed out as follows:
-|             (0,2) A button to turn system on/off while inside threshold range - recommended: Illuminable Mushroom Button
+|             (0,2) A button to override system on/off - recommended: Illuminable Mushroom Button
 |             (0,1) "Potentiometer with Readout" for threshold max - readout is percent of storage volume
 |             (0,0) "Potentiometer with Readout" for threshold min - readout is percent of storage volume
 
@@ -145,8 +151,13 @@ Module.Version.pretty = EEPROM.Version.ToString( Module.Version.full )
 1.4.11
  + Update for EEPROM v1.3.8
  + Control logic update for multi-output recipes:
- |  + Storage for all outputs must be provided
- |  + Screen output has been adjusted to accomodate a column for the second output
+    + Storage for all outputs must be provided
+    + Screen output has been adjusted to accomodate a column for the second output
+1.4.12
+ + Support for multiple CircuitSwitches, all switches will be treated the same, who am I to put restrictions on your factory design?
+ + System On/Off override no longer has no lock out and can properly override in all situations
+ + System On/Off override will revert back to automatic mode 10 seconds after pushing the button while inside the threshold range; outside the range it will remain as selected
+ + Threshold Potentiometers (with readout) have their intensity increased so they are actually visible
 ]]
 
 
@@ -171,6 +182,8 @@ local SolidStorage              = ClassGroup.Storage.Solids
 local FluidStorage              = ClassGroup.Storage.Fluids
 local RSSSigns                  = ClassGroup.Displays.Signs.ReallySimpleSigns
 
+local Color                     = require( "/lib/Colors.lua", EEPROM.Remote.CommonLib )
+
 local UIO                       = require( "/lib/UIOElements.lua" )
 
 local ItemDatum                 = require( "/lib/ItemDatum.lua", EEPROM.Remote.CommonLib )
@@ -189,7 +202,7 @@ local programAllMachines = true         -- Program all the machines with the fir
 local timesliceSeconds = 0.125          -- Place nice and timeslice!  0.125s between internal timeslices
 local cycleUpdateMS = 100               -- Update the signs every X ms, default is 100 (0.1 seconds); regardless of events, this is how often the control logic is updated
 local signUpdateMS = 1000               -- Update the signs every X ms, default is 1000 (1 second); faster updates just lag the game, if there was player proximity detection then we might consider making this variable but there isn't so we won't
-local throughputUpdateMS = 10000        -- Update the throughput rate monitoring every X ms, default is 10000 (10 seconds); more time = more accurate but less frequent display updates of the "rate"
+local RESET_OVERRIDE_MS = 10000         -- Keep the current override state and clear the override status after this many milliseconds
 local softwareUpdateMS = 10 * 60 * 1000 -- Only check for software updates once every 10 minutes, we don't need to hammer this and if we're smarter then we have .version files on the remote so we only need to transmit a few bytes an hour instead of several hundreds of kilobytes
 
 triggerOnThreshold  = tonumber( EEPROM.Boot.ComputerSettings[ "triggeronthreshold"  ] or  25 ) / 100.0  -- 0.00 to 1.00 as a percent
@@ -236,11 +249,11 @@ local vcEEPROM = cWhite
 function rebootTerminal()
     adminUIOReflashAndReboot:setState( false )
     if userUIOSystemOnOff ~= nil then
-        userUIOSystemOnOff:setState( false )
+        userUIOSystemOnOff:setState( SYS_STATE_OVER_OFF )
     end
     drawBootScreens( ____RebootMessage, ____RebootMessageLen )
     
-    switch.isSwitchOn = false
+    setSwitchState( false )
     
     local result, reason = EEPROM.Remote.Update()
     if not result then
@@ -611,7 +624,7 @@ function updateScreens( fulldraw )
     end
     y = y + 1
     
-    for _, data in pairs( machineDatum ) do
+    for _, data in pairs( machineDatums ) do
         --computer.skip()
         machineCollimator:drawTable( 0, y, data )
         totalProd  = totalProd  + data.productivity
@@ -632,14 +645,14 @@ function updateScreens( fulldraw )
     
     
     -- Show how quickly all the machines are eating the inputs
-    y = drawCycleData( y, "Input:", inputCycle, fulldraw )
+    y = drawCycleData( y, "Input:", inputCycles, fulldraw )
     
     -- Show how slowly all the machines are creating the outputs
-    y = drawCycleData( y, "Output:", outputCycle, fulldraw )
+    y = drawCycleData( y, "Output:", outputCycles, fulldraw )
     
     
     -- Show the average production productivity
-    totalProd = totalProd / #machineDatum
+    totalProd = totalProd / #machineDatums
     screensSetText( 0, y, string.format( "Productivity: %3.1f%%", totalProd * 100.0 ) )
     y = y + 1
     
@@ -685,23 +698,30 @@ function updateScreens( fulldraw )
     if delta < 0 then
         -- Does the player have Just Pause installed?  FIN doesn't tick while the
         -- game is paused but the clock it uses does so timers can be thrown off
-        -- reset all timers
-        local pre = string.format( "\n\t\tstart = %d\n\t\tfinish = %d\n\t\tdelta = %d\n\t\tnextSignUpdate = %d\n\t\tnextVersionCheck = %d\n\t\tnextCycleUpdate = %d\n\t\tthroughput.lastTimestamp = %d",
+        -- reset all timers.
+        local pre = string.format( "\n\t\tstart = %d\n\t\tfinish = %d\n\t\tdelta = %d\n\t\tnextSignUpdate = %d\n\t\tnextVersionCheck = %d\n\t\tnextCycleUpdate = %d",
             start, finish, delta,
-            nextSignUpdate, nextVersionCheck, nextCycleUpdate, throughput.lastTimestamp )
+            nextSignUpdate, nextVersionCheck, nextCycleUpdate )
+        for i, sa in pairs( storageArrays ) do
+            pre = pre .. string.format( "\n\t\tstorage array %d = %d", i, sa.__lastTimestamp )
+        end
         
         local newTimestamp = computer.millis()
         nextSignUpdate = newTimestamp + signUpdateMS
         nextVersionCheck = newTimestamp + softwareUpdateMS
         nextCycleUpdate = newTimestamp + cycleUpdateMS
-        initThroughput()
+        for i, sa in pairs( storageArrays ) do
+            sa:resetThroughput()
+        end
         
-        local post = string.format( "\n\t\tnewTimestamp = %d\n\t\tnextSignUpdate = %d (+ %d ms)\n\t\tnextVersionCheck = %d (+ %d ms)\n\t\tnextCycleUpdate = %d (+ %d ms)\n\t\tthroughput.lastTimestamp = %d",
+        local post = string.format( "\n\t\tnewTimestamp = %d\n\t\tnextSignUpdate = %d (+ %d ms)\n\t\tnextVersionCheck = %d (+ %d ms)\n\t\tnextCycleUpdate = %d (+ %d ms)",
             newTimestamp,
             nextSignUpdate, signUpdateMS,
             nextVersionCheck, softwareUpdateMS,
-            nextCycleUpdate, cycleUpdateMS,
-            throughput.lastTimestamp )
+            nextCycleUpdate, cycleUpdateMS )
+        for i, sa in pairs( storageArrays ) do
+            post = post .. string.format( "\n\t\tstorage array %d = %d", i, sa.__lastTimestamp )
+        end
         
         print( string.format( "Had to correct derpy timer, updateScreen() draw delta was less than 0 ms!\n\tBefore:%s\n\tAfter:%s", pre, post ) )
         
@@ -748,19 +768,20 @@ function drawScreenFooter( drawtime, fulldraw )
     --print( drawtime )
 end
 
-function drawCycleData( y, label, dataCycle, fulldraw )
-    if dataCycle == nil or #dataCycle == 0 then return y end
+function drawCycleData( y, label, cycleDatums, fulldraw )
+    if cycleDatums == nil or #cycleDatums == 0 then return y end
     if fulldraw then
         screensSetText( 0, y, label, nil, cBlack )
     end
+    local x = screenWidth - 25
     y = y + 1
-    for _, datum in pairs( dataCycle ) do
+    for _, cycleDatum in pairs( cycleDatums ) do
         
-        local t = string.format( '+ %s', datum.name )
+        local t = string.format( '+ %s', cycleDatum.name )
         screensSetText( 1, y, t )
         
-        local t = string.format( '%9.2f/%9.2f %s/m', datum.amount, datum.total, datum.units )
-        screensSetText( 21, y, t )
+        local t = string.format( '%9.2f/%9.2f %s/m', cycleDatum.amount, cycleDatum.total, cycleDatum.units )
+        screensSetText( x, y, t )
         y = y + 1
     end
     return y + 1
@@ -827,12 +848,12 @@ function drawStorageLine( y, name, current, max, fulldraw, ... )
         
         local full = screenWidth - ( barX + 2 )
         local low = current / sMax
-        local col = barX + round( full * low )
-        screensSetText( col, y, '^', cRed )
+        local colL = barX + round( full * low )
+        screensSetText( colL, y, '^', cRed )
         
         local high = max / sMax
-        col = barX + round( full * high )
-        screensSetText( col, y, '^', cGreen )
+        local colH = barX + round( full * high )
+        screensSetText( colH, y, '^', cGreen )
     end
 end
 
@@ -875,27 +896,43 @@ end
 
 
 -- CircuitSwitch --
-switch = nil
+switches = nil
 
 
-function getSwitch()
-    -- Find the power switch
-    local switches = component.getComponentsByClass( ClassGroup.CircuitSwitches.All )
+function getSwitches()
+    -- Find the power switches
+    switches = component.getComponentsByClass( ClassGroup.CircuitSwitches.All )
     listProxiesAs( "Switches", switches, true )
-    if #switches > 1 then
-        panic( "More than one Switch detected!  There should be EXACTLY one!" )
+end
+
+function setSwitchState( state )
+    if switches ~= nil then
+        -- Only flip the switches if there are switches to flip
+        for _, switch in pairs( switches ) do
+            switch.isSwitchOn = state
+        end
     end
-    -- Pull the first (and only) switch from the array
-    switch = switches[ 1 ]
 end
 
 function updateSwitch()
-    -- Only flip the switch if there is a switch to flip
-    if switch ~= nil then
-        switch.isSwitchOn = onState
-    end
+    setSwitchState( onState )
     if userUIOSystemOnOff ~= nil then
-        userUIOSystemOnOff:setState( onState )
+        -- Set the on/off button state color based on override/automatic mode states
+        local state = nil
+        if onState then
+            if overrideState ~= nil then
+                state = SYS_STATE_OVER_ON
+            else
+                state = SYS_STATE_AUTO_ON
+            end
+        else
+            if overrideState ~= nil then
+                state = SYS_STATE_OVER_OFF
+            else
+                state = SYS_STATE_AUTO_OFF
+            end
+        end
+        userUIOSystemOnOff:setState( state )
     end
 end
 
@@ -905,7 +942,7 @@ end
 -- Machines --
 machineCollimator = nil
 machineType = MachineDatum.MT_INVALID
-machineDatum = {}
+machineDatums = {}
 
 
 function getMachines()
@@ -914,18 +951,18 @@ function getMachines()
     listProxiesAs( "Machines", machines, true, true )
     
     for idx, machine in pairs( machines ) do
-        machineDatum[ idx ] = MachineDatum.new( machine )
+        machineDatums[ idx ] = MachineDatum.new( machine )
     end
     
     -- They will all be the same, get the type from the first one
-    machineType = machineDatum[ 1 ].mt
+    machineType = machineDatums[ 1 ].mt
 end
 
 
 function listenToAllMachineDatumFactoryConnectorsByDirection( direction, onlyConnected )
     if onlyConnected == nil or type( onlyConnected ) ~= "boolean" then onlyConnected = true end
     local count = 0
-    for _, md in pairs( machineDatum ) do
+    for _, md in pairs( machineDatums ) do
         
         local actor = md.machine
         local connectors = actor:getFactoryConnectors()
@@ -945,7 +982,7 @@ end
 function ignoreAllMachineDatumFactoryConnectorsByDirection( direction, onlyConnected )
     if onlyConnected == nil or type( onlyConnected ) ~= "boolean" then onlyConnected = false end
     local count = 0
-    for _, md in pairs( machineDatum ) do
+    for _, md in pairs( machineDatums ) do
         
         local actor = md.machine
         local connectors = actor:getFactoryConnectors()
@@ -973,7 +1010,7 @@ function handleItemTransfer( edata )
 end
 
 function getMachineOutputItem()
-    for _, datum in pairs( machineDatum ) do
+    for _, datum in pairs( machineDatums ) do
         local machine = datum.machine
         local inv = component.getInventoryByName( machine, component.INV_OUTPUT )
         
@@ -986,7 +1023,7 @@ function getMachineOutputItem()
 end
 
 function findMachineWithRecipeOrExtractedItem()
-    if #machineDatum == 0 then
+    if #machineDatums == 0 then
         return nil
     end
     
@@ -996,7 +1033,7 @@ function findMachineWithRecipeOrExtractedItem()
     if machineType == MachineDatum.MT_MANUFACTURER then
         print( "Machine Type: Manufacturer")
         
-        for _, md in pairs( machineDatum ) do
+        for _, md in pairs( machineDatums ) do
             local machine = md.machine
             local recipe = machine:getRecipe()
             if recipe ~= nil then
@@ -1023,7 +1060,7 @@ function findMachineWithRecipeOrExtractedItem()
             if listenToAllMachineDatumFactoryConnectorsByDirection( 1 ) > 0 then-- Output connector
                 
                 event.clear()
-                switch.isSwitchOn = true
+                setSwitchState( true )
                 
                 print( "10s wait for primary output event..." )
                 local edata = { event.pull( 10.0 ) }            -- Wait for an event, but timeout after 10s
@@ -1038,7 +1075,7 @@ function findMachineWithRecipeOrExtractedItem()
         if rachine == nil or recit == nil then
             -- Poop, no event (yet) or no connected connectors, turn machines on and hammer the scanner
             print( "20s wait for secondary output event..." )
-            switch.isSwitchOn = true                                    -- Pump it!
+            setSwitchState( true )                               -- Pump it!
             local timeout = computer.millis() + 20000                   -- 20s timeout on hardcore scanner
             while computer.millis() < timeout do
                 
@@ -1058,7 +1095,7 @@ function findMachineWithRecipeOrExtractedItem()
             end
         end
         
-        switch.isSwitchOn = false
+        setSwitchState( false )
         ignoreAllMachineDatumFactoryConnectorsByDirection( 1 )
         
         if rachine == nil then
@@ -1077,55 +1114,58 @@ end
 
 
 -- Production Cycle Data --
-inputCycle = {}
-outputCycle = {}
+inputCycles = {}
+outputCycles = {}
 
 function updateCycleData()
-    local function resetCycleData()
-        local function resetCycleData( data, items )
-            if items == nil then return end
-            for idx, item in pairs( items ) do
+    local function resetCycleDatums()
+        local function resetCycleDatum( itemCycles, itemDatums )
+            if itemDatums == nil then return end
+            for idx, itemDatum in pairs( itemDatums ) do
                 
-                local datum = data[ idx ]
-                if datum == nil then
-                    datum = {
-                        name = item.name,
-                        nameLen = item.nameLen,
-                        units = item.units,
-                        unitsLen = item.unitsLen
+                local cycleDatum = itemCycles[ idx ]
+                if cycleDatum == nil then
+                    cycleDatum = {
+                        name = itemDatum.name,
+                        nameLen = itemDatum.nameLen,
+                        units = itemDatum.units,
+                        unitsLen = itemDatum.unitsLen
                     }
-                    data[ idx ] = datum
+                    itemCycles[ idx ] = cycleDatum
                 end
                 
-                datum.total  = 0
-                datum.amount = 0
+                cycleDatum.total  = 0
+                cycleDatum.amount = 0
                 
             end
         end
-        resetCycleData( inputCycle, inputItems )
-        resetCycleData( outputCycle, outputItems )
+        resetCycleDatum( inputCycles, inputItems )
+        resetCycleDatum( outputCycles, outputItems )
     end
     
-    local function updateCycleData( data, items, cycleTime, prod )
-        for idx, item in pairs( items ) do
+    local function updateCycleDatums( machineDatum, itemCycles, itemDatums )
+        local cycleTime = machineDatum.cycleTime
+        local productivity = machineDatum.productivity
+        
+        for idx, item in pairs( itemDatums ) do
             
-            local datum = data[ idx ]
-            local value = item.amount * ( 60 / cycleTime )
-            datum.total = datum.total + value
-            datum.amount = datum.amount + value * prod
+            local cycleDatum = itemCycles[ idx ]
+            local total = item.amount * ( 60 / cycleTime )
+            cycleDatum.total = cycleDatum.total  + total
+            cycleDatum.amount = cycleDatum.amount + total * productivity
             
         end
     end
     
-    resetCycleData()
+    resetCycleDatums()
     
-    for _, data in pairs( machineDatum ) do
-        data:update()
+    for _, machineDatum in pairs( machineDatums ) do
+        machineDatum:update( baseProductionTime )   -- Feed the base production time as machines down don't update their cycleTime until they have power - this forces a computed value for the MachineDatum from their set potential
         if inputItems ~= nil and #inputItems > 0 then
-            updateCycleData( inputCycle, inputItems, data.cycleTime, data.productivity )
+            updateCycleDatums( machineDatum, inputCycles, inputItems )
         end
         if outputItems ~= nil and #outputItems > 0 then
-            updateCycleData( outputCycle, outputItems, data.cycleTime, data.productivity )
+            updateCycleDatums( machineDatum, outputCycles, outputItems )
         end
     end
 end
@@ -1159,7 +1199,7 @@ function getRecipeAndProduct()
         
         -- Program all other machines with the same recipe
         if programAllMachines then
-            for _, md in pairs( machineDatum ) do
+            for _, md in pairs( machineDatums ) do
                 md.machine:setRecipe( recipe )
             end
         end
@@ -1184,7 +1224,10 @@ end
 
 -- Storage --
 storageArrays = nil
-storageState = nil
+automaticState = nil
+overrideState = nil
+overrideStateCount = nil
+overrideStateNilOnTick = nil
 
 function getStorage()
     if outputItems == nil then
@@ -1249,7 +1292,7 @@ function updateStorage()
         if sa.current <  sa.thresholdLow  then newState = true end
         if sa.current >= sa.thresholdHigh then newState = false end
     end
-    storageState = newState
+    automaticState = newState
 end
 
 
@@ -1280,6 +1323,43 @@ function updateValves()
         valve.userFlowLimit = mult * maxLimit
     end
     
+end
+
+
+
+
+-- Wiremod: Constant Gate --
+local WM_CONSTANTGATE_ENABLE = "Enable"
+wmConstantGate = nil
+
+
+function getConstantGate()
+    -- Find all the Constant Gates
+    local gates = component.getComponentsByClass( ClassGroup.Wiremod.Gates.Build_Const_C )
+    listProxiesAs( "Wiremod Constant Gates", gates )
+    if gates == nil or #gates == 0 then return end
+    if #gates ~= 1 then
+        panic( "There should be only one Wiremod: Constant Gate" )
+    end
+    wmConstantGate = gates[ 1 ]
+end
+
+function updateConstantGate()
+    if wmConstantGate == nil then
+        return
+    end
+    
+    function setWMConstBool( wmobject, name, value )
+        while wmobject:getWireBool( name ) ~= value do
+            wmobject:setConstBoolValue( name, value )
+        end
+    end
+    
+    function getWMConstBool( wmobject, name )
+        return wmobject:getWireBool( name )
+    end
+    
+    setWMConstBool( wmConstantGate, WM_CONSTANTGATE_ENABLE, onState )
 end
 
 
@@ -1449,9 +1529,11 @@ function getAdminPanels()
     end
     
     -- Create the combinator or panic
-    adminUIOReflashAndReboot = UIO.createButtonCombinator( adminPanels, AP_ReflashAndReboot, triggerReflashAndReboot, { r = 1.0, g = 0.0, b = 0.0, a = 1.0 }, { r = 1.0, g = 0.0, b = 0.0, a = 0.0 } )
+    local ctrue  = Color.new( 1.0, 0.0, 0.0, 1.0 )
+    local cfalse = Color.new( 1.0, 0.0, 0.0, 0.0 )
+    adminUIOReflashAndReboot = UIO.createBoolButtonCombinator( adminPanels, AP_ReflashAndReboot, triggerReflashAndReboot, ctrue, cfalse )
     if adminUIOReflashAndReboot == nil then
-        panic( debug.traceback( "Could not create EEPROM Flash and Reboot Button Combinator" ) )
+        panic( "Could not create EEPROM Flash and Reboot Button Combinator" )
     end
     
     -- Set the state to false until we are done booting
@@ -1462,6 +1544,10 @@ end
 
 
 -- "User" Panel --
+SYS_STATE_AUTO_OFF = 1
+SYS_STATE_AUTO_ON  = 2
+SYS_STATE_OVER_OFF = 3
+SYS_STATE_OVER_ON  = 4
 local UP_btnOnOff = { 0, 2 }
 local UP_potMax   = { 0, 1 }
 local UP_potMin   = { 0, 0 }
@@ -1476,13 +1562,21 @@ local userUIOThresholdMin = nil
 ---Event UIO callbacks
 local function triggerSystemOnOff( edata )
     --print( "Trigger: System On/Off" )
-    if storageState ~= nil then
-        print( "\nSystem is on automatic control and cannot currently be overridden.\nEither adjust the threshold potentiometers so the current inventory levels are inside the automatic on-off range or,\nturn the computer off and manually operate the switch if you wish you force the system on or off at this time.\n" )
-        computer.beep()
+    if overrideState == nil then            -- No override, opposite current state
+        overrideState = not onState
+        overrideStateCount = 1
+        overrideStateNilOnTick = computer.millis() + RESET_OVERRIDE_MS
+    else                                    -- Override on
+        overrideStateCount = overrideStateCount + 1
+        if overrideStateCount > 2 then      -- Cycled through override states, disable override
+            overrideState = nil
+            overrideStateCount = nil
+            overrideStateNilOnTick = nil
+        else                                -- Opposite current override
+            overrideState = not overrideState
+            overrideStateNilOnTick = computer.millis() + RESET_OVERRIDE_MS
+        end
     end
-    onState = not onState
-    userUIOSystemOnOff:setState( onState )
-    switch.isSwitchOn = onState
 end
 local function valueChangedThresholdMax( edata )
     --print( "valueChanged: ThresholdMax" )
@@ -1518,9 +1612,15 @@ function getUserPanels()
     end
     
     -- Create the combinators or panic
-    userUIOSystemOnOff = UIO.createButtonCombinator( userPanels, UP_btnOnOff, triggerSystemOnOff, { r = 0.0, g = 1.0, b = 0.0, a = 1.0 }, { r = 0.0, g = 1.0, b = 0.0, a = 0.0 } )
+    local states = {
+        Color.new( 0.0, 1.0, 0.0, 0.0 ),    -- Auto off
+        Color.new( 0.0, 1.0, 0.0, 1.0 ),    -- Auto on
+        Color.new( 1.0, 1.0, 0.0, 0.0 ),    -- Force off
+        Color.new( 1.0, 1.0, 0.0, 1.0 ),    -- Force on
+    }
+    userUIOSystemOnOff = UIO.createIntButtonCombinator( userPanels, UP_btnOnOff, triggerSystemOnOff, states )
     if userUIOSystemOnOff == nil then
-        panic( debug.traceback( "Could not create System On/Off Button Combinator" ) )
+        panic( "Could not create System On/Off Button Combinator" )
     end
     
     -- Set the state to false until we are done booting
@@ -1532,13 +1632,16 @@ function getUserPanels()
     
     userUIOThresholdMax = UIO.createPotentiometerCombinator( userPanels, UP_potMax, valueChangedThresholdMax, iOff, iOn + 1, 100 )
     if userUIOThresholdMax == nil then
-        panic( debug.traceback( "Could not create Threshold Max Potentiometer Combinator" ) )
+        panic( "Could not create Threshold Max Potentiometer Combinator" )
     end
     
     userUIOThresholdMin = UIO.createPotentiometerCombinator( userPanels, UP_potMin, valueChangedThresholdMin, iOn, 0, iOff - 1 )
     if userUIOThresholdMin == nil then
-        panic( debug.traceback( "Could not create Threshold Min Potentiometer Combinator" ) )
+        panic( "Could not create Threshold Min Potentiometer Combinator" )
     end
+    
+    userUIOThresholdMax:setForeColor( Color.WHITE )
+    userUIOThresholdMin:setForeColor( Color.WHITE )
 end
 
 
@@ -1623,7 +1726,7 @@ function getTotalDisplayLines()
             t = t + base + c
         end
     end
-    addToT( 2, machineDatum )
+    addToT( 2, machineDatums )
     addToT( 2, inputItems )
     addToT( 2, outputItems )
     for _, sa in pairs( storageArrays ) do
@@ -1666,8 +1769,24 @@ end
 
 
 function updateState()
-    if storageState ~= nil then
-        onState = storageState
+    -- Update state by preference order
+    if overrideStateNilOnTick ~= nil and computer.millis() >= overrideStateNilOnTick then
+        -- Clear the override state without changing the current state
+        if automaticState == nil or overrideState == automaticState then
+            -- But only if we aren't overriding the automatic control
+            overrideState = nil
+            overrideStateCount = nil
+            overrideStateNilOnTick = nil
+        else
+            -- Otherwise wait until automatic on/off is nil
+            overrideStateNilOnTick = computer.millis() + RESET_OVERRIDE_MS
+        end
+    end
+    -- Update the system state with the override/automatic state
+    if overrideState ~= nil then
+        onState = overrideState
+    elseif automaticState ~= nil then
+        onState = automaticState
     end
 end
 
@@ -1706,6 +1825,7 @@ function handleProductionCycle()
     updateSwitch()
     updateValves()
     updateMergers()
+    updateConstantGate()
     
 end
 
@@ -1750,8 +1870,8 @@ function Init()
     -- Get the "user panels"
     getUserPanels()
     
-    -- Get the one and only power switch
-    getSwitch()
+    -- Get the power switches
+    getSwitches()
     
     -- Get all the machines
     getMachines()
@@ -1767,6 +1887,9 @@ function Init()
     
     -- Get any codeable mergers controlling item in-flow
     getMergers()
+    
+    -- Get any Wiremod Constant Gate controlling item in-flow
+    getConstantGate()
     
     
     local result, reason = MachineDatum.Collimator.new( machineType, outputItems, inputItems, screenWidth, baseProductionTime, screensSetText )
