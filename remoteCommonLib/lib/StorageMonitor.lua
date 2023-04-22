@@ -1,4 +1,6 @@
 ---Inventory Storage Monitor
+---OBSOLETE EXPERIMANTAL CODE
+---Use StorageArray instead
 ---@class StorageMonitor:table
 ---@field item ItemType Item being requested
 ---@field storage Actor Storage container to monitor (can be any Actor that has an inventory)

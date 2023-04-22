@@ -165,7 +165,7 @@ end
 
 
 ---Get the "useful data" of the individual storage container in the array by index, 1 .. StorageArray.count
----@returns string, integer, integer, name, current, max
+---@return string, integer, integer name, current, max
 function StorageArray:storeUsefulData( index )
     if index < 1 or index > self.count then return nil end
     local store = self.__stores[ index ]
@@ -184,7 +184,7 @@ function StorageArray:resetThroughput()
     self.__lastTimestamp    = computer.millis()
 end
 
----Get the current number of items/stacks this inventory is holding
+---Update the StorageArray properties (current count, throughput rate) from all the individual container values.
 function StorageArray:update()
     local current = 0
     local stores = self.__stores
@@ -226,7 +226,6 @@ function StorageArray:update()
                 self.__lastTimestamp= newTimestamp
             end
         end
-        
         
     end
     

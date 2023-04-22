@@ -15,7 +15,7 @@ EEPROM = { Version = { full = { 1, 3, 8, 'a' } } }
 ---     The remote file system to map as the root path for this computer.
 ---
 ---   bootloader="boot.lua"
----     The name of the Lua file to load the execute on this computer.
+---     The name of the Lua file to load and execute on this computer.
 ---
 ---   usetempfilesystem="false"
 ---     If no local disk is present then create (true) a temporary file system and use
