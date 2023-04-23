@@ -3,7 +3,7 @@
 --- DateTime: 15/02/2023 7:05 am
 ---
 
-local UPDATED = "14/03/2023 1:40 am"
+local UPDATED = "23/04/2023 4:28 am"
 print( "\nInitialising HypertubeNode.Network\n\nLast Update: " .. UPDATED .. "\n" )
 
 
@@ -190,7 +190,7 @@ function Network.handleAdminReset( net, sender, payload )
     HypertubeNode.setNodeStatus( 'Resetting node...', Color.YELLOW_SIGN_BRDRTEXT, Color.GREY_0125 )
     
     -- Reload the settings so we can preserve any that may have changed since booting
-    local settings = readComputerSettings()
+    local settings = EEPROM.Settings.FromComputer()
     
     -- Now update any runtime settings
     local size = HypertubeNode.hyper_network.size
@@ -201,7 +201,7 @@ function Network.handleAdminReset( net, sender, payload )
     else
         settings[ Network.Default.NETWORK_SIZE_SETTING ] = size
     end
-    writeComputerSettings( settings )
+    EEPROM.Settings.ToComputer( settings )
     
     -- Optionally flash the EEPROM
     if payload.updateEEPROM then
