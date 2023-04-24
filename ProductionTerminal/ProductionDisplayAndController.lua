@@ -1,4 +1,4 @@
-Module = { Version = { full = { 1, 4, 12, '' } } }
+Module = { Version = { full = { 1, 5, 13, '' } } }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
@@ -158,6 +158,9 @@ Module.Version.pretty = EEPROM.Version.ToString( Module.Version.full )
  + System On/Off override no longer has no lock out and can properly override in all situations
  + System On/Off override will revert back to automatic mode 10 seconds after pushing the button while inside the threshold range; outside the range it will remain as selected
  + Threshold Potentiometers (with readout) have their intensity increased so they are actually visible
+1.4.12
+ + System will now turn on if it detect an output rate from storage that exceeds the production output, even if it has not reached the low-end threshold
+ + Removed some old code not used
 ]]
 
 
@@ -320,14 +323,6 @@ end
 
 function round( a )
     return math.floor( a + 0.5 )
-end
-
-
-function unitsForItem( item )
-    if item.isFluid then
-        return "m³/m", 4
-    end
-    return "p/m", 3
 end
 
 
@@ -1117,6 +1112,19 @@ end
 inputCycles = {}
 outputCycles = {}
 
+function findCycleDatumFromItemType( cycles, datums, item )
+    if cycles == nil or type( cycles ) ~= "table" then return nil end
+    if datums == nil or type( datums ) ~= "table" or #datums == 0 then return nil end
+    if #cycles == 0 or #cycles ~= #datums then return nil end
+    if item == nil or tostring( item ) ~= "ItemType-Class" then return false end
+    for idx, datum in pairs( datums ) do
+        if ItemDatum.isItemDatum( datum ) then
+            if datum.item == item then return cycles[ idx ] end
+        end
+    end
+    return nil
+end
+
 function updateCycleData()
     local function resetCycleDatums()
         local function resetCycleDatum( itemCycles, itemDatums )
@@ -1289,8 +1297,18 @@ function updateStorage()
     local newState = nil
     for _, sa in pairs( storageArrays ) do
         sa:update()
+        -- Check state based on threshold levels
         if sa.current <  sa.thresholdLow  then newState = true end
         if sa.current >= sa.thresholdHigh then newState = false end
+        -- Check state based on throughput; if consuming faster than can be produced, turn on regardless of thresholds
+        local rate = -sa.rate
+        if rate > 0.0 then
+            local item = sa.item.item
+            local datum = findCycleDatumFromItemType( outputCycles, outputItems, item )
+            if rate >= datum.total then newState = true end
+        end
+        -- If the storage array is full, then turn it off no matter what
+        if sa.current >= sa.max then newState = false end
     end
     automaticState = newState
 end

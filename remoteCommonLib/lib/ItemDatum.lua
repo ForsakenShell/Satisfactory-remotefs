@@ -138,9 +138,9 @@ function ItemDatum.new( item, amount )
     local units, unitsLen = ItemDatum.unitsByForm( _item.form )
     
     local isFluid = ItemDatum.itemIsFluid( _item )
-    if isFluid then
-        _amount = _amount / 1000.0
-    end
+    --if isFluid then
+    --    _amount = _amount / 1000.0
+    --end
     
     local datum = {
         item = _item,
