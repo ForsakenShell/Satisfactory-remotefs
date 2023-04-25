@@ -1,4 +1,4 @@
-Module = { Version = { full = { 1, 5, 13, '' } } }
+Module = { Version = { full = { 1, 5, 13, 'a' } } }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
@@ -648,11 +648,11 @@ function updateScreens( fulldraw )
     
     -- Show the average production productivity
     totalProd = totalProd / #machineDatums
-    screensSetText( 0, y, string.format( "Productivity: %3.1f%%", totalProd * 100.0 ) )
+    screensSetText( 0, y, string.format( "Productivity: %5.1f%%", totalProd * 100.0 ) )
     y = y + 1
     
     -- Show the overall power consumption
-    screensSetText( 0, y, string.format( "Power: %1.1f MW", totalPower ) )
+    screensSetText( 0, y, string.format( "Power: %8.1f MW", totalPower ) )
     
     
     -- Draw Storage Title
@@ -787,7 +787,8 @@ local barChars          = { "\u{258F}", "\u{258E}", "\u{258D}", "\u{258C}", "\u{
 local barFillChar       = "\u{2588}"
 
 function getFillBar( value, max, maxChars )
-    local p = ( value / max ) * maxChars
+    local v = math.max( 0.0, math.min( value, max ) ) -- limit value to 0..max to prevent oddities
+    local p = ( v / max ) * maxChars
     local b = math.floor( p )
     local r = p - b
     local e = round( r * 8.0 )
@@ -1295,11 +1296,13 @@ end
 
 function updateStorage()
     local newState = nil
+    local current
     for _, sa in pairs( storageArrays ) do
         sa:update()
+        current = sa.current
         -- Check state based on threshold levels
-        if sa.current <  sa.thresholdLow  then newState = true end
-        if sa.current >= sa.thresholdHigh then newState = false end
+        if current <  sa.thresholdLow  then newState = true end
+        if current >= sa.thresholdHigh then newState = false end
         -- Check state based on throughput; if consuming faster than can be produced, turn on regardless of thresholds
         local rate = -sa.rate
         if rate > 0.0 then
@@ -1308,7 +1311,7 @@ function updateStorage()
             if rate >= datum.total then newState = true end
         end
         -- If the storage array is full, then turn it off no matter what
-        if sa.current >= sa.max then newState = false end
+        if current >= sa.max then newState = false end
     end
     automaticState = newState
 end
