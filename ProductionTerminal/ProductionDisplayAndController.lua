@@ -1,4 +1,4 @@
-Module = { Version = { full = { 1, 5, 13, 'a' } } }
+Module = { Version = { full = { 1, 6, 14, '' } } }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
@@ -91,11 +91,12 @@ Network Setup:
 |
 +- "Single Point Module Panel" (optional):
 |   0+  Used to hold a single button to trigger the computer to download the latest version of the EEPROM and reboot.
-|       Recommended: Illuminable Mushroom Button which will be illuminated when the system boots up and dimmed when
-|         [re]booting.
+|       Recommended: Illuminable Pushbutton Module which will be illuminated when the system boots up and dimmed
+|       when [re]booting.
 |
 +- "Sizeable Module Panel" (optional):
-|   0+  1x3 - Layed out as follows:
+|   0+  1x3 or 1x4 - Laid out as follows:
+|             (0,3) (optional) A button to toggle "full" and "minimal" display modes - recommended: Illuminable Pushbutton Module
 |             (0,2) A button to override system on/off - recommended: Illuminable Mushroom Button
 |             (0,1) "Potentiometer with Readout" for threshold max - readout is percent of storage volume
 |             (0,0) "Potentiometer with Readout" for threshold min - readout is percent of storage volume
@@ -158,9 +159,16 @@ Module.Version.pretty = EEPROM.Version.ToString( Module.Version.full )
  + System On/Off override no longer has no lock out and can properly override in all situations
  + System On/Off override will revert back to automatic mode 10 seconds after pushing the button while inside the threshold range; outside the range it will remain as selected
  + Threshold Potentiometers (with readout) have their intensity increased so they are actually visible
-1.4.12
+1.5.13
+ + Fixes fluid throughputs reading 1/1000th their values
  + System will now turn on if it detect an output rate from storage that exceeds the production output, even if it has not reached the low-end threshold
  + Removed some old code not used
+1.6.14
+ + New optional button in the user panel to toggle "full" and "minimal" display modes; if this button is present then the display will remain in "full" mode after
+ | booting and after the button is pressed for 60 seconds and then go into "minimal" mode; this is to save CPU time as rendering the full display can take a long time
+ + Modified timeslicing logic
+ + Removed some redundant code
+ + Fixes machine standby states
 ]]
 
 
@@ -202,11 +210,14 @@ local RSSBuilder                = nil -- We will require this as needed
 
 local programAllMachines = true         -- Program all the machines with the first recipe found (so you can be lazy and only set one machine)
 
-local timesliceSeconds = 0.125          -- Place nice and timeslice!  0.125s between internal timeslices
-local cycleUpdateMS = 100               -- Update the signs every X ms, default is 100 (0.1 seconds); regardless of events, this is how often the control logic is updated
-local signUpdateMS = 1000               -- Update the signs every X ms, default is 1000 (1 second); faster updates just lag the game, if there was player proximity detection then we might consider making this variable but there isn't so we won't
+local cycleUpdateMS = 1000              -- Update the signs every X ms, default is 1000 (1.0 seconds); regardless of events, this is how often the control logic is updated
+local signUpdateMIN = 250               -- Minimum screen update interval
+local signUpdateMAX = 2500              -- Maximum screen update interval
+local signUpdateMS = signUpdateMIN      -- Update the signs every X ms, this is the initial update value, it will be auto-adjusted to be faster/slower depending on how long it takes to draw the screens
+local cpuSaverTimerout = 60000          -- Switch to "minimal" dispay mode after this amount of time (in ms)
 local RESET_OVERRIDE_MS = 10000         -- Keep the current override state and clear the override status after this many milliseconds
-local softwareUpdateMS = 10 * 60 * 1000 -- Only check for software updates once every 10 minutes, we don't need to hammer this and if we're smarter then we have .version files on the remote so we only need to transmit a few bytes an hour instead of several hundreds of kilobytes
+local softwareUpdateMS = 10 * 60 * 1000 -- Only check for software updates once every 10 minutes, we don't need to hammer this and if we're smart then we have .version files on the remote so we only need to transmit a few bytes an hour instead of several hundreds of kilobytes
+local timesliceSeconds = math.min( cycleUpdateMS, signUpdateMIN, cpuSaverTimerout, RESET_OVERRIDE_MS, softwareUpdateMS ) / 1000 -- Play nice and timeslice!  Use the smallest required update interval
 
 triggerOnThreshold  = tonumber( EEPROM.Boot.ComputerSettings[ "triggeronthreshold"  ] or  25 ) / 100.0  -- 0.00 to 1.00 as a percent
 triggerOffThreshold = tonumber( EEPROM.Boot.ComputerSettings[ "triggeroffthreshold" ] or 100 ) / 100.0  -- 0.00 to 1.00 as a percent
@@ -251,12 +262,9 @@ local vcEEPROM = cWhite
 
 function rebootTerminal()
     adminUIOReflashAndReboot:setState( false )
-    if userUIOSystemOnOff ~= nil then
-        userUIOSystemOnOff:setState( SYS_STATE_OVER_OFF )
-    end
     drawBootScreens( ____RebootMessage, ____RebootMessageLen )
     
-    setSwitchState( false )
+    updateSwitches( false, SYS_STATE_OVER_OFF )
     
     local result, reason = EEPROM.Remote.Update()
     if not result then
@@ -419,6 +427,9 @@ end
 -- Screens --
 local screens = {}
 local canDraw = false
+local cpuSaverMode = false
+local cpuSaverOffTime = -1
+
 
 local ____BootMessage = "Booting Production Terminal"
 local ____BootMessageLen = utf8.len( ____BootMessage )
@@ -608,128 +619,116 @@ function updateScreens( fulldraw )
     end
     y = y + 1
     
-    -- Data to record for overall machine data
-    local totalProd = 0
-    local totalPower = 0
-    
-    -- Go through and draw each MachineDatum
-    
-    if fulldraw then
-        machineCollimator:drawHeaders( 0, y )
-    end
-    y = y + 1
-    
-    for _, data in pairs( machineDatums ) do
-        --computer.skip()
-        machineCollimator:drawTable( 0, y, data )
-        totalProd  = totalProd  + data.productivity
-        totalPower = totalPower + data.currentPowerConsumption
-        y = y + 1
-    end
-    computer.skip()
-    
-    -- Draw Overall Production Title
-    y = y + 1
-    if fulldraw then
-        screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
-        screensSetText( prodOverallTitleX, y, prodOverallTitle )
-    else
-        screensSetForeground( cWhite )
-    end
-    y = y + 1
-    
-    
-    -- Show how quickly all the machines are eating the inputs
-    y = drawCycleData( y, "Input:", inputCycles, fulldraw )
-    
-    -- Show how slowly all the machines are creating the outputs
-    y = drawCycleData( y, "Output:", outputCycles, fulldraw )
-    
-    
-    -- Show the average production productivity
-    totalProd = totalProd / #machineDatums
-    screensSetText( 0, y, string.format( "Productivity: %5.1f%%", totalProd * 100.0 ) )
-    y = y + 1
-    
-    -- Show the overall power consumption
-    screensSetText( 0, y, string.format( "Power: %8.1f MW", totalPower ) )
-    
-    
-    -- Draw Storage Title
-    y = y + 2
-    if fulldraw then
-        screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
-        screensSetText( storOverallTitleX, y, storOverallTitle )
-    end
-    
-    -- Go through each Storage Array and draw it's details
-    for _, sa in pairs( storageArrays ) do
+    if cpuSaverMode then
         
-        y = y + 1
-        screensSetText( 0, y, sa.name, cWhite, cBlack )
-        
-        -- Go through each Storage container in the array, draw it's current, max as well as a neat little bar graph
-        for idx = 1, sa.count do
-            computer.skip()
+        -- Go through each Storage Array and draw it's total and throughput
+        for _, sa in pairs( storageArrays ) do
+            
             y = y + 1
-            local name, current, max = sa:storeUsefulData( idx )
-            drawStorageLine( y, name, current, max, fulldraw, screenWidth )
+            screensSetText( 0, y, sa.name, cWhite, cBlack )
+            y = y + 1
+            drawStorageLine( y, "Total:", sa.current, sa.max, fulldraw, screenWidth )
+            y = y + 1
+            drawStorageLine( y, "Thresholds:", sa.thresholdLow, sa.thresholdHigh, fulldraw or thresholdChanged, screenWidth, sa.max )
+            y = y + 1
+            drawThroughput( y, sa.rate, sa.units, sa.unitsLen, 21, 5, 2 )
+            
+            y = y + 1
         end
         
-        -- Draw a storage line for the total storage
-        y = y + 2
-        drawStorageLine( y, "Total:", sa.current, sa.max, fulldraw, screenWidth )
-        y = y + 1
-        drawStorageLine( y, "Thresholds:", sa.thresholdLow, sa.thresholdHigh, fulldraw or thresholdChanged, screenWidth, sa.max )
-        y = y + 1
-        drawThroughput( y, sa.rate, sa.units, sa.unitsLen, 21, 5, 2 )
+    else
         
+        -- Data to record for overall machine data
+        local totalProd = 0
+        local totalPower = 0
+        
+        -- Go through and draw each MachineDatum
+        
+        if fulldraw then
+            machineCollimator:drawHeaders( 0, y )
+        end
         y = y + 1
+        
+        for _, data in pairs( machineDatums ) do
+            --computer.skip()
+            machineCollimator:drawTable( 0, y, data )
+            totalProd  = totalProd  + data.productivity
+            totalPower = totalPower + data.currentPowerConsumption
+            y = y + 1
+        end
+        computer.skip()
+        
+        -- Draw Overall Production Title
+        y = y + 1
+        if fulldraw then
+            screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
+            screensSetText( prodOverallTitleX, y, prodOverallTitle )
+        else
+            screensSetForeground( cWhite )
+        end
+        y = y + 1
+        
+        
+        -- Show how quickly all the machines are eating the inputs
+        y = drawCycleData( y, "Input:", inputCycles, fulldraw )
+        
+        -- Show how slowly all the machines are creating the outputs
+        y = drawCycleData( y, "Output:", outputCycles, fulldraw )
+        
+        
+        -- Show the average production productivity
+        totalProd = totalProd / #machineDatums
+        screensSetText( 0, y, string.format( "Productivity: %5.1f%%", totalProd * 100.0 ) )
+        y = y + 1
+        
+        -- Show the overall power consumption
+        screensSetText( 0, y, string.format( "Power: %12.1f MW", totalPower ) )
+        
+        
+        -- Draw Storage Title
+        y = y + 2
+        if fulldraw then
+            screensFill( 0, y, screenWidth, 1, ' ', cWhite, cTitle )
+            screensSetText( storOverallTitleX, y, storOverallTitle )
+        end
+        
+        -- Go through each Storage Array and draw it's details
+        for _, sa in pairs( storageArrays ) do
+            
+            y = y + 1
+            screensSetText( 0, y, sa.name, cWhite, cBlack )
+            
+            -- Go through each Storage container in the array, draw it's current, max as well as a neat little bar graph
+            for idx = 1, sa.count do
+                computer.skip()
+                y = y + 1
+                local name, current, max = sa:storeUsefulData( idx )
+                drawStorageLine( y, name, current, max, fulldraw, screenWidth )
+            end
+            
+            -- Draw a storage line for the total storage
+            y = y + 2
+            drawStorageLine( y, "Total:", sa.current, sa.max, fulldraw, screenWidth )
+            y = y + 1
+            drawStorageLine( y, "Thresholds:", sa.thresholdLow, sa.thresholdHigh, fulldraw or thresholdChanged, screenWidth, sa.max )
+            y = y + 1
+            drawThroughput( y, sa.rate, sa.units, sa.unitsLen, 21, 5, 2 )
+            
+            y = y + 1
+        end
+        
     end
     
     -- Very bottom row of each screen, draw the the EEPROM version and total draw time
     local finish = computer.millis()
     local delta = finish - start
-    if delta < 0 then
-        -- Does the player have Just Pause installed?  FIN doesn't tick while the
-        -- game is paused but the clock it uses does so timers can be thrown off
-        -- reset all timers.
-        local pre = string.format( "\n\t\tstart = %d\n\t\tfinish = %d\n\t\tdelta = %d\n\t\tnextSignUpdate = %d\n\t\tnextVersionCheck = %d\n\t\tnextCycleUpdate = %d",
-            start, finish, delta,
-            nextSignUpdate, nextVersionCheck, nextCycleUpdate )
-        for i, sa in pairs( storageArrays ) do
-            pre = pre .. string.format( "\n\t\tstorage array %d = %d", i, sa.__lastTimestamp )
-        end
-        
-        local newTimestamp = computer.millis()
-        nextSignUpdate = newTimestamp + signUpdateMS
-        nextVersionCheck = newTimestamp + softwareUpdateMS
-        nextCycleUpdate = newTimestamp + cycleUpdateMS
-        for i, sa in pairs( storageArrays ) do
-            sa:resetThroughput()
-        end
-        
-        local post = string.format( "\n\t\tnewTimestamp = %d\n\t\tnextSignUpdate = %d (+ %d ms)\n\t\tnextVersionCheck = %d (+ %d ms)\n\t\tnextCycleUpdate = %d (+ %d ms)",
-            newTimestamp,
-            nextSignUpdate, signUpdateMS,
-            nextVersionCheck, softwareUpdateMS,
-            nextCycleUpdate, cycleUpdateMS )
-        for i, sa in pairs( storageArrays ) do
-            post = post .. string.format( "\n\t\tstorage array %d = %d", i, sa.__lastTimestamp )
-        end
-        
-        print( string.format( "Had to correct derpy timer, updateScreen() draw delta was less than 0 ms!\n\tBefore:%s\n\tAfter:%s", pre, post ) )
-        
-        drawScreenFooter( string.format( "%9d | strange timers", newTimestamp ), fulldraw )
-    else
-        drawScreenFooter( string.format( "%9d | %5d ms | %5d ms", finish, signUpdateMS, delta ), fulldraw )
-        -- If it takes a long time to draw the screen, spread out how often we do it,
-        -- also speed it back up if it starts taking less time
-        if delta > ( signUpdateMS * 0.25 ) then signUpdateMS = round( signUpdateMS * 1.25 )
-        elseif delta < ( signUpdateMS * 0.10 ) then signUpdateMS = round( signUpdateMS * 0.9 ) end
-        if signUpdateMS < 250 then signUpdateMS = 250 end
-        if signUpdateMS > 2500 and signUpdateMS > delta then signUpdateMS = 2500 end
-    end
+    drawScreenFooter( string.format( "%12d | %5d ms | %5d ms", finish, signUpdateMS, delta ), fulldraw )
+    -- If it takes a long time to draw the screen, spread out how often we do it,
+    -- also speed it back up if it starts taking less time
+    if delta > ( signUpdateMS * 0.25 ) then signUpdateMS = round( signUpdateMS * 1.25 )
+    elseif delta < ( signUpdateMS * 0.10 ) then signUpdateMS = round( signUpdateMS * 0.9 ) end
+    if signUpdateMS < signUpdateMIN then signUpdateMS = signUpdateMIN end
+    if signUpdateMS > signUpdateMAX and signUpdateMS > delta then signUpdateMS = signUpdateMAX end
     
     -- Commit all GPU buffers to their Screens
     screensCommit()
@@ -910,26 +909,33 @@ function setSwitchState( state )
     end
 end
 
-function updateSwitch()
-    setSwitchState( onState )
+function updateSwitches( state, uioState )
+    setSwitchState( state )
     if userUIOSystemOnOff ~= nil then
-        -- Set the on/off button state color based on override/automatic mode states
-        local state = nil
-        if onState then
-            if overrideState ~= nil then
-                state = SYS_STATE_OVER_ON
+        if uioState == nil then
+            -- Set the on/off button state color based on override/automatic mode states
+            if state then
+                if overrideState ~= nil then
+                    state = SYS_STATE_OVER_ON
+                else
+                    state = SYS_STATE_AUTO_ON
+                end
             else
-                state = SYS_STATE_AUTO_ON
+                if overrideState ~= nil then
+                    state = SYS_STATE_OVER_OFF
+                else
+                    state = SYS_STATE_AUTO_OFF
+                end
             end
+            userUIOSystemOnOff:setState( state )
         else
-            if overrideState ~= nil then
-                state = SYS_STATE_OVER_OFF
-            else
-                state = SYS_STATE_AUTO_OFF
-            end
+            -- Set the on/off button state color based on explicit state
+            userUIOSystemOnOff:setState( uioState )
         end
-        userUIOSystemOnOff:setState( state )
     end
+    -- Set the standby state of each machine, this will preserve the long-term
+    -- productivity on the machine making feedback more accurate
+    setMachineStandby( not state )
 end
 
 
@@ -1056,7 +1062,7 @@ function findMachineWithRecipeOrExtractedItem()
             if listenToAllMachineDatumFactoryConnectorsByDirection( 1 ) > 0 then-- Output connector
                 
                 event.clear()
-                setSwitchState( true )
+                updateSwitches( true )
                 
                 print( "10s wait for primary output event..." )
                 local edata = { event.pull( 10.0 ) }            -- Wait for an event, but timeout after 10s
@@ -1071,7 +1077,7 @@ function findMachineWithRecipeOrExtractedItem()
         if rachine == nil or recit == nil then
             -- Poop, no event (yet) or no connected connectors, turn machines on and hammer the scanner
             print( "20s wait for secondary output event..." )
-            setSwitchState( true )                               -- Pump it!
+            updateSwitches( true )                               -- Pump it!
             local timeout = computer.millis() + 20000                   -- 20s timeout on hardcore scanner
             while computer.millis() < timeout do
                 
@@ -1091,7 +1097,7 @@ function findMachineWithRecipeOrExtractedItem()
             end
         end
         
-        setSwitchState( false )
+        updateSwitches( false )
         ignoreAllMachineDatumFactoryConnectorsByDirection( 1 )
         
         if rachine == nil then
@@ -1104,6 +1110,12 @@ function findMachineWithRecipeOrExtractedItem()
     end
     
     return rachine, recit
+end
+
+function setMachineStandby( standby )
+    for _, datum in pairs( machineDatums ) do
+        datum.machine.standby = standby
+    end
 end
 
 
@@ -1569,10 +1581,12 @@ SYS_STATE_AUTO_OFF = 1
 SYS_STATE_AUTO_ON  = 2
 SYS_STATE_OVER_OFF = 3
 SYS_STATE_OVER_ON  = 4
-local UP_btnOnOff = { 0, 2 }
+local UP_btnDisplayMode = { 0, 3 }
+local UP_btnSystemOnOff = { 0, 2 }
 local UP_potMax   = { 0, 1 }
 local UP_potMin   = { 0, 0 }
 local userPanels = nil
+userUIODisplayMode = nil
 userUIOSystemOnOff = nil
 local userUIOThresholdMax = nil
 local userUIOThresholdMin = nil
@@ -1581,6 +1595,15 @@ local userUIOThresholdMin = nil
 --triggerOffThreshold = tonumber( EEPROM.Boot.ComputerSettings[ "triggerOffThreshold" ] ) or 1.00 -- 0.00 to 1.00 as a percent
 
 ---Event UIO callbacks
+local function triggerDisplayMode( edata )
+    --print( "Trigger: Display Mode" )
+    cpuSaverMode = not cpuSaverMode
+    firstDraw = true
+    if not cpuSaverMode then
+        cpuSaverOffTime = computer.millis() + cpuSaverTimerout
+    end
+    userUIODisplayMode:setState( not cpuSaverMode )
+end
 local function triggerSystemOnOff( edata )
     --print( "Trigger: System On/Off" )
     if overrideState == nil then            -- No override, opposite current state
@@ -1639,7 +1662,7 @@ function getUserPanels()
         Color.new( 1.0, 1.0, 0.0, 0.0 ),    -- Force off
         Color.new( 1.0, 1.0, 0.0, 1.0 ),    -- Force on
     }
-    userUIOSystemOnOff = UIO.createIntButtonCombinator( userPanels, UP_btnOnOff, triggerSystemOnOff, states )
+    userUIOSystemOnOff = UIO.createIntButtonCombinator( userPanels, UP_btnSystemOnOff, triggerSystemOnOff, states )
     if userUIOSystemOnOff == nil then
         panic( "Could not create System On/Off Button Combinator" )
     end
@@ -1663,6 +1686,16 @@ function getUserPanels()
     
     userUIOThresholdMax:setForeColor( Color.WHITE )
     userUIOThresholdMin:setForeColor( Color.WHITE )
+    
+    -- Get the optional screen on/off button
+    local ctrue  = Color.new( 0.0, 1.0, 1.0, 1.0 )
+    local cfalse = Color.new( 0.0, 1.0, 1.0, 0.0 )
+    userUIODisplayMode = UIO.createBoolButtonCombinator( userPanels, UP_btnDisplayMode, triggerDisplayMode, ctrue, cfalse, true )
+    if userUIODisplayMode ~= nil then
+        userUIODisplayMode:setState( not cpuSaverMode )
+        cpuSaverOffTime = computer.millis() + cpuSaverTimerout
+    end
+    
 end
 
 
@@ -1813,13 +1846,21 @@ end
 
 
 nextSignUpdate = -1
-local firstDraw = true
+firstDraw = true
 function updateDisplays()
     local newTimestamp = computer.millis()
     if nextSignUpdate > newTimestamp + signUpdateMS then nextSignUpdate = -1 end
     if newTimestamp < nextSignUpdate then return end
     
     nextSignUpdate = newTimestamp + signUpdateMS
+    
+    if userUIODisplayMode ~= nil
+    and not cpuSaverMode
+    and newTimestamp >= cpuSaverOffTime then
+        cpuSaverMode = true
+        firstDraw = true
+        userUIODisplayMode:setState( not cpuSaverMode )
+    end
     
     updateScreens( firstDraw )
     updateRSSPanels()
@@ -1843,7 +1884,7 @@ function handleProductionCycle()
     updateCycleData()
     
     -- Change the physical state of the system
-    updateSwitch()
+    updateSwitches( onState )
     updateValves()
     updateMergers()
     updateConstantGate()
