@@ -214,10 +214,10 @@ local cycleUpdateMS = 1000              -- Update the signs every X ms, default 
 local signUpdateMIN = 250               -- Minimum screen update interval
 local signUpdateMAX = 2500              -- Maximum screen update interval
 local signUpdateMS = signUpdateMIN      -- Update the signs every X ms, this is the initial update value, it will be auto-adjusted to be faster/slower depending on how long it takes to draw the screens
-local cpuSaverTimerout = 60000          -- Switch to "minimal" dispay mode after this amount of time (in ms)
+local cpuSaverTimeout = 60000           -- Switch to "minimal" dispay mode after this amount of time (in ms)
 local RESET_OVERRIDE_MS = 10000         -- Keep the current override state and clear the override status after this many milliseconds
 local softwareUpdateMS = 10 * 60 * 1000 -- Only check for software updates once every 10 minutes, we don't need to hammer this and if we're smart then we have .version files on the remote so we only need to transmit a few bytes an hour instead of several hundreds of kilobytes
-local timesliceSeconds = math.min( cycleUpdateMS, signUpdateMIN, cpuSaverTimerout, RESET_OVERRIDE_MS, softwareUpdateMS ) / 1000 -- Play nice and timeslice!  Use the smallest required update interval
+local timesliceSeconds = math.min( cycleUpdateMS, signUpdateMIN, cpuSaverTimeout, RESET_OVERRIDE_MS, softwareUpdateMS ) / 1000 -- Play nice and timeslice!  Use the smallest required update interval
 
 triggerOnThreshold  = tonumber( EEPROM.Boot.ComputerSettings[ "triggeronthreshold"  ] or  25 ) / 100.0  -- 0.00 to 1.00 as a percent
 triggerOffThreshold = tonumber( EEPROM.Boot.ComputerSettings[ "triggeroffthreshold" ] or 100 ) / 100.0  -- 0.00 to 1.00 as a percent
@@ -1600,7 +1600,7 @@ local function triggerDisplayMode( edata )
     cpuSaverMode = not cpuSaverMode
     firstDraw = true
     if not cpuSaverMode then
-        cpuSaverOffTime = computer.millis() + cpuSaverTimerout
+        cpuSaverOffTime = computer.millis() + cpuSaverTimeout
     end
     userUIODisplayMode:setState( not cpuSaverMode )
 end
@@ -1693,7 +1693,7 @@ function getUserPanels()
     userUIODisplayMode = UIO.createBoolButtonCombinator( userPanels, UP_btnDisplayMode, triggerDisplayMode, ctrue, cfalse, true )
     if userUIODisplayMode ~= nil then
         userUIODisplayMode:setState( not cpuSaverMode )
-        cpuSaverOffTime = computer.millis() + cpuSaverTimerout
+        cpuSaverOffTime = computer.millis() + cpuSaverTimeout
     end
     
 end
