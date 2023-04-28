@@ -1,4 +1,4 @@
-EEPROM = { Version = { full = { 1, 3, 8, 'a' } } }
+EEPROM = { Version = { full = { 1, 3, 9, '' } } }
 -- This will get updated with each new script release Major.Minor.Revision.Hotfix
 -- Revision/Hotfix should be incremented every change and can be used as an "absolute version" for checking against
 -- Do not move from the topline of this file as it is checked remotely
@@ -188,6 +188,37 @@ end
 
 
 
+---Get whether the remote server supports request ranges, this will be useful for version checking
+local function getRemoteServerCaps()
+    if EEPROM.Boot.InternetCard == nil then return end -- No internet card means no remotes
+    
+    local rangeBlockSize = nil
+    
+    local request = EEPROM.Boot.InternetCard:request( EEPROM.Remote.EEPROM, "HEAD", "" )
+    local result, data, headers = request:await()
+    local result = ( result ~= nil )and( result >= 200 and result <= 299 )  -- Magic numbers are bad, 2xx is the request successful response range
+    
+    if result then
+        for i=1, #headers, 2 do
+            local value = headers[ i ]
+            if value == "Accept-Ranges" then
+                print( "Remote accepts requests in chunks of " .. headers[ i + 1 ] )
+                rangeBlockSize = tonumber( headers[ i + 1 ] )
+                break
+            end
+        end
+    end
+    
+    EEPROM.Remote.RangeBlockSize = rangeBlockSize
+    if rangeBlockSize ~= nil then
+        --Compute the block count required for the version information
+        EEPROM.Remote.VersionBlocks = math.ceil( 128 / rangeBlockSize )
+    end
+end
+
+
+
+
 ---Extract a boolean from a string
 ---@param s string the string
 ---@param default boolean the default value if s does not equal "true" or "false" or isn't a string
@@ -216,17 +247,23 @@ EEPROM.Boot.UseTempFileSystem       = stringToBoolean( EEPROM.Boot.ComputerSetti
 EEPROM.Boot.TempRemoteFiles         = stringToBoolean( EEPROM.Boot.ComputerSettings[ "tempremotefiles" ], true )
 EEPROM.Boot.AlwaysFetchFromRemote   = stringToBoolean( EEPROM.Boot.ComputerSettings[ "alwaysfetchfromremote" ], false )
 EEPROM.Settings.DebugMode           = stringToBoolean( EEPROM.Boot.ComputerSettings[ "debugmode" ], false )
+getRemoteServerCaps()
 
 
 
 
 if EEPROM.Boot.InternetCard ~= nil and EEPROM.Boot.RemoteFS ~= '' then
-    print( "RemoteFSBaseURL: " .. EEPROM.Remote.FSBaseURL )
-    print( "RemoteCommonLib: " .. EEPROM.Remote.CommonLib )
-    print( "RemoteFS       : " .. EEPROM.Boot.RemoteFS )
-    print( "Use TempFS     : " .. tostring( EEPROM.Boot.UseTempFileSystem ) )
-    print( "Temp Files     : " .. tostring( EEPROM.Boot.TempRemoteFiles ) )
-    print( "Always Fetch   : " .. tostring( EEPROM.Boot.AlwaysFetchFromRemote ) )
+    print( "RemoteFSBaseURL  : " .. EEPROM.Remote.FSBaseURL )
+    print( "RemoteCommonLib  : " .. EEPROM.Remote.CommonLib )
+    print( "RemoteFS         : " .. EEPROM.Boot.RemoteFS )
+    if EEPROM.Remote.RangeBlockSize ~= nil then
+        print( "Remote Block Size: " .. EEPROM.Remote.RangeBlockSize )
+    else
+        print( "Remote Block Size: unsupported" )
+    end
+    print( "Use TempFS       : " .. tostring( EEPROM.Boot.UseTempFileSystem ) )
+    print( "Temp Files       : " .. tostring( EEPROM.Boot.TempRemoteFiles ) )
+    print( "Always Fetch     : " .. tostring( EEPROM.Boot.AlwaysFetchFromRemote ) )
 end
 
 
@@ -234,11 +271,11 @@ end
 
 -- Setup the root disk aliasing or computer panic if no files to access
 if EEPROM.Boot.Disk == '' then
-    print( "WARNING        : No local disk installed" )
+    print( "WARNING          : No local disk installed" )
 else
-    print( "Disk           : " .. EEPROM.Boot.Disk )
+    print( "Disk             : " .. EEPROM.Boot.Disk )
     EEPROM.Boot.HostPath = '%LocalAppData%\\FactoryGame\\Saved\\SaveGames\\computers\\' .. EEPROM.Boot.Disk
-    print( 'Host path      : "' .. EEPROM.Boot.HostPath .. '"' )
+    print( 'Host path        : "' .. EEPROM.Boot.HostPath .. '"' )
     if not EEPROM.____filesystem.mount( "/dev/" .. EEPROM.Boot.Disk, '/' ) then
         computer.panic( "Could not mount disk to root" )
     end
@@ -246,10 +283,10 @@ else
 end
 
 if EEPROM.Boot.InternetCard == nil then
-    print( "WARNING        : No InternetCard installed, will not be able to fetch from remote file system if a file does not exist on the local disk" )
+    print( "WARNING          : No InternetCard installed, will not be able to fetch from remote file system if a file does not exist on the local disk" )
 else
     if EEPROM.Boot.RemoteFS == '' then
-        print( "WARNING        : No remote file system specified to fetch files from; EEPROM updates may still happen, however" )
+        print( "WARNING          : No remote file system specified to fetch files from; EEPROM updates may still happen, however" )
         
     elseif EEPROM.Boot.UseTempFileSystem then
         if not EEPROM.____filesystem.makeFileSystem( "tmpfs", "tmp" ) then
@@ -270,10 +307,10 @@ EEPROM.Boot.UseLoadFile = ( ( EEPROM.Boot.Disk ~= '' ) or EEPROM.Boot.UseTempFil
 
 
 if EEPROM.Settings.DebugMode then
-    print( "Debug Mode     : On")
+    print( "Debug Mode       : On")
 end
 
-print( "BootLoader     : " .. EEPROM.Boot.BootLoader .. "\n\n" )
+print( "BootLoader       : " .. EEPROM.Boot.BootLoader .. "\n\n" )
 
 
 
@@ -287,10 +324,25 @@ EEPROM.__RequiredFiles = {}
 ---@param remote string Full URL to the file
 ---@param panicOnFail boolean computer.panic() if the file cannot be retrieved; otherwise return nil
 ---@param debugTraceLevel? integer debug.traceback level, default is 2
+---@param firstBlock? integer First remote block to fetch, this is multiples of EEPROM.Remote.RangeBlockSize
+---@param lastBlock? integer Last remote block to fetch, this is multiples of EEPROM.Remote.RangeBlockSize
 ---@return boolean, string true, data or false, reason
-function EEPROM.Remote.Fetch( remote, panicOnFail, debugTraceLevel )
-    local request = EEPROM.Boot.InternetCard:request( remote, "GET", "" )
-    local result, data = request:await()
+function EEPROM.Remote.Fetch( remote, panicOnFail, debugTraceLevel, firstBlock, lastBlock )
+    local request = nil
+    local block = nil
+    if firstBlock ~= nil and type( firstBlock ) == "number" and firstBlock >= 0
+    and lastBlock ~= nil and type( lastBlock ) == "number" and lastBlock >= firstBlock then
+        local size = EEPROM.Remote.RangeBlockSize
+        if size ~= nil then
+            block = string.format( "bytes=%d-%d", firstBlock * size, lastBlock * size - 1 )
+        end
+    end
+    if block == nil then
+        request = EEPROM.Boot.InternetCard:request( remote, "GET", "" )
+    else
+        request = EEPROM.Boot.InternetCard:request( remote, "GET", "", "Range", block )
+    end
+    local result, data, headers = request:await()
     local result = ( result ~= nil )and( result >= 200 and result <= 299 )  -- Magic numbers are bad, 2xx is the request successful response range
     if panicOnFail and not result then
         debugTraceLevel = debugTraceLevel or 2
@@ -457,10 +509,10 @@ function EEPROM.Version.GetRemoteEx( remote )
     
     -- Try the smaller "version" file that (if it exists) will just contain the version table
     local vOnlyFile = remote .. ".version"
-    local result, data = EEPROM.Remote.Fetch( vOnlyFile, false, 3 )
+    local result, data = EEPROM.Remote.Fetch( vOnlyFile, false, 3, 0, EEPROM.Remote.VersionBlocks )
     if not result then
         -- Doesn't exist or some other problem, try and get the full remote file
-        result, data = EEPROM.Remote.Fetch( remote, false, 3 )
+        result, data = EEPROM.Remote.Fetch( remote, false, 3, 0, EEPROM.Remote.VersionBlocks )
     else
         remote = vOnlyFile
     end
